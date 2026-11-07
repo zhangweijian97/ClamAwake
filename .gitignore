@@ -1,0 +1,6 @@
+# build artifacts
+/vd-engine
+/mirror-probe
+
+# macOS
+.DS_Store
