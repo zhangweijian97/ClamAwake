@@ -1,4 +1,4 @@
-// vd-engine — 虚拟屏引擎（ClamAwake v0.2）
+// vd-engine — 虚拟屏引擎（ClamAwake v0.3，新增 doctor 环境自检子命令）
 //
 // 编译: swiftc -O src/vd-engine.swift -o vd-engine
 //
@@ -39,6 +39,7 @@ let usage = """
   vd-engine remove <id>                          销毁指定虚拟屏
   vd-engine list                                 列出全部在线显示器（只读）
   vd-engine hi <id>                              打印指定屏的 HiDPI 情况（只读）
+  vd-engine doctor                               环境自检+可执行建议（只读；有阻塞问题时退出码 1）
 
 选项:
   --hidpi  逻辑 WxH、像素 2Wx2H（例: 1800 1169 --hidpi → 像素 3600x2338，HiDPI 档进模式列表）
@@ -295,6 +296,166 @@ func waitForNewDisplay(baseline: [CGDirectDisplayID], expected: CGDirectDisplayI
     return nil
 }
 
+// MARK: - doctor（环境自检，v0.3 增）
+
+/// 只读外部命令的 stdout（失败/非零退出返回 nil）。doctor 只用它读 pmset / pgrep，不派任何写动作。
+private func runReadonlyCommand(_ path: String, _ arguments: [String]) -> String? {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: path)
+    process.arguments = arguments
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = FileHandle.nullDevice
+    do {
+        try process.run()
+    } catch {
+        return nil
+    }
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else { return nil }
+    return String(data: data, encoding: .utf8)
+}
+
+/// 从 `pmset -g` 输出解析 SleepDisabled（System-wide power settings 段）。
+/// true=合盖不入睡 / false=会入睡 / nil=读不到（该项缺失，状态未知）。
+private func sleepDisabled(from pmsetOutput: String) -> Bool? {
+    for rawLine in pmsetOutput.split(whereSeparator: { $0 == "\n" || $0 == "\r" }) {
+        let line = rawLine.trimmingCharacters(in: .whitespaces)
+        guard line.hasPrefix("SleepDisabled") else { continue }
+        let tokens = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
+        guard let value = tokens.last else { continue }
+        if value == "1" { return true }
+        if value == "0" { return false }
+    }
+    return nil
+}
+
+/// 除自己之外还在跑的 vd-engine 进程 pid（pgrep -x vd-engine，排除自身——doctor 本身就叫 vd-engine）。
+private func otherVdEnginePids() -> [Int] {
+    guard let output = runReadonlyCommand("/usr/bin/pgrep", ["-x", "vd-engine"]) else { return [] }
+    let own = Int(getpid())
+    return output.split(whereSeparator: { $0 == "\n" || $0 == "\r" })
+        .compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+        .filter { $0 != own }
+}
+
+private struct DoctorFinding {
+    let key: String        // 机器可读检查名（stdout 的 check= 行）
+    let result: String     // pass / warn / fail
+    let detail: String     // 机器可读细节
+    let advice: [String]   // 可执行建议（stderr，人读、agent 可照跑）
+}
+
+/// doctor 子命令主体。stdout 每行一项 `check=<key> result=<...> detail=<...>`（机器可读），
+/// 诊断与建议走 stderr（既有约定）。返回退出码：有 fail → 1；warn 不置 1（注意但可继续）。
+private func runDoctor() -> Int32 {
+    var findings: [DoctorFinding] = []
+    let osVersion = ProcessInfo.processInfo.operatingSystemVersionString
+
+    // 1. 私有类可用性 —— 整个工具的地基，缺了什么都没法做
+    if NSClassFromString("CGVirtualDisplay") != nil {
+        findings.append(DoctorFinding(key: "private_class", result: "pass",
+                                      detail: "CGVirtualDisplay available", advice: []))
+    } else {
+        findings.append(DoctorFinding(key: "private_class", result: "fail",
+                                      detail: "CGVirtualDisplay missing",
+                                      advice: ["本机 macOS（\(osVersion)）没有 CGVirtualDisplay 私有类，ClamAwake 无法工作；无可执行的恢复动作。"]))
+    }
+
+    // 2. caffeinate —— 合盖配方的另一半
+    if FileManager.default.fileExists(atPath: "/usr/bin/caffeinate") {
+        findings.append(DoctorFinding(key: "caffeinate", result: "pass",
+                                      detail: "/usr/bin/caffeinate present", advice: []))
+    } else {
+        findings.append(DoctorFinding(key: "caffeinate", result: "fail",
+                                      detail: "/usr/bin/caffeinate missing",
+                                      advice: ["系统自带的 /usr/bin/caffeinate 缺失（异常环境）；合盖配方里 caffeinate -d 一步无法执行。"]))
+    }
+
+    // 3. 显示器枚举 —— CG 公开 API 的运行时健全性
+    let online = onlineDisplayIDs()
+    if online.isEmpty {
+        findings.append(DoctorFinding(key: "displays", result: "fail", detail: "0 display online",
+                                      advice: ["CGGetOnlineDisplayList 返回 0 块在线显示器（异常环境）；连内屏都不可见，后续步骤无从谈起。"]))
+    } else {
+        let builtinCount = online.filter { CGDisplayIsBuiltin($0) != 0 }.count
+        findings.append(DoctorFinding(key: "displays", result: "pass",
+                                      detail: "\(online.count) display(s) online, \(builtinCount) builtin", advice: []))
+    }
+
+    // 4. 已有保活冲突：别的 vd-engine 进程 / KYA 标记的虚拟屏 / caffeinate 断言是否在跑
+    //    caffeinate 断言属于配方的正常组成部分，只进 detail 不触发 warn。
+    let pmsetOutput = runReadonlyCommand("/usr/bin/pmset", ["-g"]) ?? ""
+    let enginePids = otherVdEnginePids()
+    let kyaScreens = online.filter { CGDisplayVendorNumber($0) == kyaVendorID }
+    let caffeinateActive = pmsetOutput.contains("caffeinate")
+    var conflictParts: [String] = []
+    if !enginePids.isEmpty { conflictParts.append("vd-engine pid " + enginePids.map(String.init).joined(separator: ",")) }
+    if !kyaScreens.isEmpty { conflictParts.append("kya display id " + kyaScreens.map(String.init).joined(separator: ",")) }
+    conflictParts.append(caffeinateActive ? "caffeinate assertion active" : "no caffeinate assertion")
+    if enginePids.isEmpty && kyaScreens.isEmpty {
+        // pass 行也自包含：三项状态都写进 detail，机器消费时不必对照 warn 行猜字段
+        conflictParts.insert("no kya display", at: 0)
+        conflictParts.insert("no vd-engine pid", at: 0)
+        findings.append(DoctorFinding(key: "keepalive_running", result: "pass",
+                                      detail: conflictParts.joined(separator: "; "), advice: []))
+    } else {
+        var advice: [String] = ["已有一套保活在跑（见上行 detail）。"]
+        if let first = enginePids.first {
+            advice.append("  · 若这是你有意保留的常驻引擎：直接复用它（vd-engine list 里 kya=yes 的屏），不要重复建屏。")
+            advice.append("  · 若不是：先结束再继续—— kill -TERM \(first)（屏随进程消失）。")
+        } else {
+            advice.append("  · 有 kya 标记的屏但没有 vd-engine 进程：多半是别的虚拟屏工具（如 SimpleDisplay）建的；确认后退出那个工具，或直接用它的屏继续。")
+        }
+        findings.append(DoctorFinding(key: "keepalive_running", result: "warn",
+                                      detail: conflictParts.joined(separator: "; "), advice: advice))
+    }
+
+    // 5. 合盖入睡（SleepDisabled）：1=合盖不入睡；0/读不到=合盖大概率入睡（除非外接真屏+电源的 clamshell 条件成立）。
+    //    「外接真屏」排除 kya 标记的虚拟屏——虚拟屏是否满足 clamshell 条件未经实测，不作判据。
+    let realExternal = online.filter { CGDisplayIsBuiltin($0) == 0 && CGDisplayVendorNumber($0) != kyaVendorID }
+    switch sleepDisabled(from: pmsetOutput) {
+    case .some(true):
+        findings.append(DoctorFinding(key: "lid_sleep", result: "pass",
+                                      detail: "SleepDisabled=1 (lid-close sleep disabled)", advice: []))
+    case .some(false):
+        var advice = ["合盖后机器大概率入睡，保活配方会失效。解除办法（二选一）："]
+        if !realExternal.isEmpty {
+            advice.append("  · clamshell 模式：外接真屏（id \(realExternal.map(String.init).joined(separator: ","))）+ 接电源时合盖，机器不睡——你的用法若是这样，可不禁睡。")
+        }
+        advice.append("  · 系统级禁睡（需 sudo，工具不代设）：sudo pmset -a disablesleep 1")
+        advice.append("    恢复默认：sudo pmset -a disablesleep 0；设完用 pmset -g 核对 SleepDisabled 是否变 1。")
+        findings.append(DoctorFinding(key: "lid_sleep", result: "warn",
+                                      detail: "SleepDisabled=0 (lid-close sleep possible)", advice: advice))
+    case .none:
+        findings.append(DoctorFinding(key: "lid_sleep", result: "warn",
+                                      detail: "SleepDisabled unreadable",
+                                      advice: ["从 pmset -g 读不到 SleepDisabled（合盖入睡状态未知）。人工核对：pmset -g | grep SleepDisabled；未禁睡则：sudo pmset -a disablesleep 1（需 sudo）。"]))
+    }
+
+    // 输出：stdout 一行一项（机器可读）；warn/fail 的建议走 stderr；末尾汇总走 stderr
+    for finding in findings {
+        print("check=\(finding.key) result=\(finding.result) detail=\(finding.detail)")
+    }
+    var passCount = 0, warnCount = 0, failCount = 0
+    for finding in findings {
+        switch finding.result {
+        case "pass": passCount += 1
+        case "warn": warnCount += 1
+        case "fail": failCount += 1
+        default: break
+        }
+        if !finding.advice.isEmpty {
+            errln("注意（\(finding.key)）：")
+            for line in finding.advice { errln(line) }
+        }
+    }
+    let exitCode: Int32 = failCount > 0 ? 1 : 0
+    errln("doctor 完成：\(findings.count) 项检查（pass \(passCount) / warn \(warnCount) / fail \(failCount)），退出码 \(exitCode)")
+    return exitCode
+}
+
 // MARK: - 子命令
 
 let args = CommandLine.arguments
@@ -345,8 +506,11 @@ case "create":
         exit(1)
     }
 
-    // stdout 只放机器可读的 id（脚本直接消费）；诊断信息走 stderr
+    // stdout 只放机器可读的 id（脚本直接消费）；诊断信息走 stderr。
+    // fflush 不能省：--hold 时进程不退出，stdout 重定向到文件/管道时是块缓冲，
+    // 不主动刷的话 id 一直不出缓冲（实测 2026-11-07），脚本侧「读 stdout 拿 id」会拿到空。
     print(displayID)
+    fflush(stdout)
     errln("已建虚拟屏 id=\(displayID) 逻辑=\(logicalWidth)x\(logicalHeight) 像素=\(pixelWidth)x\(pixelHeight) hidpi=\(hidpi ? "yes" : "no")")
 
     // 屏活在本进程生命周期内：进程一退出，WindowServer 就收屏（没有跨进程销毁 API，见 remove）。
@@ -462,6 +626,13 @@ case "hi":
         print("hidpi_mode_omitted=\(hidpiModes.count - listLimit)")
     }
     exit(0)
+
+case "doctor":
+    guard args.count == 2 else {
+        errln("参数错误：doctor 不接受参数\n\(usage)")
+        exit(2)
+    }
+    exit(runDoctor())
 
 default:
     errln("未知子命令：\(args[1])\n\(usage)")
