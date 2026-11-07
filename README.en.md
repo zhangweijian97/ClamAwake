@@ -18,12 +18,13 @@ On the lid side, a `caffeinate -d` display assertion is used (full recipe below)
 
 ## Current state
 
-What is published today is the CLI source form:
+Two forms ship today:
 
 - `vd-engine` — the virtual display engine (create / inspect virtual displays, plus a `doctor` environment self-check)
 - `mirror-probe` — the display mirroring tool (create / remove mirrors between the virtual display and the built-in display)
+- Menu bar shell (`shell/`) — a SwiftUI menu bar app: keep-alive toggle, status display, login item (SMAppService), system-level sleep guard (first use pops an admin authorization dialog once; no terminal required)
 
-A menu bar shell and DMG packaging are on the roadmap — that's the next stop.
+Build & package: `scripts/make-dmg.sh` produces `dist/ClamAwake.dmg` in one command (ad-hoc unsigned; double-click to install).
 
 ## First run
 
