@@ -2,5 +2,9 @@
 /vd-engine
 /mirror-probe
 
+# menubar shell 构建产物（SwiftPM 与打包脚本输出）
+.build/
+dist/
+
 # macOS
 .DS_Store
