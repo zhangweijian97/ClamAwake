@@ -1,4 +1,4 @@
-// vd-engine — 虚拟屏引擎（ClamAwake v0.3，新增 doctor 环境自检子命令）
+// vd-engine — 虚拟屏引擎（ClamAwake v0.4，--hold 常驻含护档；v0.3 新增 doctor 环境自检子命令）
 //
 // 编译: swiftc -O src/vd-engine.swift -o vd-engine
 //
@@ -12,6 +12,10 @@
 //       - settings.hiDPI = 1，modes 里放像素尺寸（2x）
 //       - 关键洞察：WindowServer 在虚拟屏上只跑「模式列表第一个」= 首选模式，不认程序化模式切换
 //         → 想要哪档分辨率，就把它放列表第一位
+//         （2026-11-08 实测修正适用边界：「不认程序化切换」指拓扑重排时 WindowServer 按自己的
+//           默认逻辑选档、无视列表首位；而 CGDisplaySetDisplayMode 在**创建者进程内**对本引擎
+//           建的屏有效（护档实测：偏档重设读回通过）。外部进程对本屏 set 无效——虚拟屏的模式
+//           配置权属创建者进程（CGError 1001 / displayplacer 静默无效），护档恰住在创建者进程里。）
 //       - 生命周期：虚拟屏活在创建进程的生命周期内（进程退出即消失），没有销毁 API
 //   · xtongs/mirrorscreen（Sources/MirrorScreen/VirtualDisplayManager.swift + Sources/CGVirtualDisplayBridge/*）
 //       - descriptor / settings / mode 三段式构造；displayID 从对象属性读（display.displayID != 0 才算建成功）
@@ -43,7 +47,9 @@ let usage = """
 
 选项:
   --hidpi  逻辑 WxH、像素 2Wx2H（例: 1800 1169 --hidpi → 像素 3600x2338，HiDPI 档进模式列表）
-  --hold   建完不退出，前台常驻持有该屏（Ctrl-C / SIGTERM 结束，屏随之销毁）
+  --hold   建完不退出，前台常驻持有该屏（Ctrl-C / SIGTERM 结束，屏随之销毁）；
+           常驻期间开启护档：显示拓扑重排（合盖/开盖/接拔屏）后自动校验本屏模式，
+           偏离目标档则重设（goal-9dcbec：合盖触发 WindowServer 默认配置导致塌档）
 
 退出码: 0 成功 / 1 运行错 / 2 用法错
 """
@@ -296,6 +302,159 @@ func waitForNewDisplay(baseline: [CGDirectDisplayID], expected: CGDirectDisplayI
     return nil
 }
 
+// MARK: - 护档（--hold 模式的分辨率守卫，goal-9dcbec）
+
+// 背景（2026-11-08 凌晨实测，WindowServer 日志实锤）：
+//   合盖瞬间内屏被移除、镜像克隆被系统解除（set_clone_master / remove clone），拓扑重排时
+//   WindowServer 对本引擎建的虚拟屏走「持久化偏好校验失败 → Applying default configuration」，
+//   模式被改写（日志 setting mode 40 -> 12）——塌档发生在合盖时刻而非开盖，开盖后停塌不自愈。
+//   引擎侧唯一的确定性防线：监听显示重配，校验本屏模式，偏离目标档则重设。
+//
+// 机制要点：
+//   · 重配事件的主体常常不是虚拟屏（合盖时事件主体是内屏 removed），所以任何重配事件都触发校验；
+//   · 校验动作幂等（模式匹配即不动），连环重排（合盖+开盖）靠 300ms 去抖合并为一次校验；
+//   · CGDisplayCopyDisplayMode 返回 NULL ≠ 塌档（镜像组 master 场景会返回 NULL，见 currentMode 注释），
+//     NULL 只记日志不重设，避免在镜像场景误动作。
+
+/// 护档上下文：C 回调不能捕获 Swift 上下文，经 userInfo 指针传递（Unmanaged 来回）。
+final class ModeGuardContext {
+    let displayID: CGDirectDisplayID
+    let targetPointsW: Int
+    let targetPointsH: Int
+    let targetPixelsW: Int
+    let targetPixelsH: Int
+    // 串行队列承载去抖与校验动作；重配回调来自 WindowServer 任意线程，不能在回调里直接干活
+    let queue = DispatchQueue(label: "vd-engine.mode-guard")
+    var pending: DispatchWorkItem?
+
+    init(displayID: CGDirectDisplayID, pointsW: Int, pointsH: Int, pixelsW: Int, pixelsH: Int) {
+        self.displayID = displayID
+        self.targetPointsW = pointsW
+        self.targetPointsH = pointsH
+        self.targetPixelsW = pixelsW
+        self.targetPixelsH = pixelsH
+    }
+
+    func guardLog(_ message: String) {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        errln("[mode-guard \(formatter.string(from: Date()))] \(message)")
+    }
+}
+
+private func modeMatchesTarget(_ mode: ModeReading?, ctx: ModeGuardContext) -> Bool {
+    guard let mode = mode else { return false }
+    return mode.pointsWidth == ctx.targetPointsW
+        && mode.pointsHeight == ctx.targetPointsH
+        && mode.pixelsWidth == ctx.targetPixelsW
+        && mode.pixelsHeight == ctx.targetPixelsH
+}
+
+/// 在目标屏的档位列表里找 points/pixels 双匹配的 CGDisplayMode（CGDisplaySetDisplayMode 需要档位对象）。
+private func findTargetMode(ctx: ModeGuardContext) -> CGDisplayMode? {
+    let opts = [kCGDisplayShowDuplicateLowResolutionModes: kCFBooleanTrue as Any] as CFDictionary
+    guard let array = CGDisplayCopyAllDisplayModes(ctx.displayID, opts) else { return nil }
+    for index in 0..<CFArrayGetCount(array) {
+        let raw = CFArrayGetValueAtIndex(array, index)
+        guard let mode = unsafeBitCast(raw, to: CGDisplayMode?.self) else { continue }
+        if mode.width == ctx.targetPointsW && mode.height == ctx.targetPointsH
+            && mode.pixelWidth == ctx.targetPixelsW && mode.pixelHeight == ctx.targetPixelsH {
+            return mode
+        }
+    }
+    return nil
+}
+
+/// 校验本屏模式并按需重设（在护档串行队列上执行）。成功/失败都打 stderr 日志（重定向到 vd-prod.err 可查）。
+private func verifyAndRestore(ctx: ModeGuardContext) {
+    guard onlineDisplayIDs().contains(ctx.displayID) else {
+        ctx.guardLog("目标屏 \(ctx.displayID) 不在线，跳过校验")
+        return
+    }
+    let current = currentMode(ctx.displayID)
+    if current == nil {
+        // NULL ≠ 塌档：镜像组 master 场景 CGDisplayCopyDisplayMode 返回 NULL（见 currentMode 注释），不动作
+        ctx.guardLog("当前模式读数 NULL（可能处于镜像组），不动作")
+        return
+    }
+    if modeMatchesTarget(current, ctx: ctx) {
+        ctx.guardLog("模式正常 \(ctx.targetPointsW)x\(ctx.targetPointsH) HiDPI，不动作")
+        return
+    }
+    let observed = current.map { "\($0.pointsWidth)x\($0.pointsHeight) 像素\($0.pixelsWidth)x\($0.pixelsHeight)" } ?? "?"
+    guard let target = findTargetMode(ctx: ctx) else {
+        ctx.guardLog("检测到偏档（当前 \(observed)），但档位列表里找不到目标档 \(ctx.targetPointsW)x\(ctx.targetPointsH)/\(ctx.targetPixelsW)x\(ctx.targetPixelsH)，无法重设")
+        return
+    }
+    let setError = CGDisplaySetDisplayMode(ctx.displayID, target, nil)
+    guard setError == .success else {
+        ctx.guardLog("检测到偏档（当前 \(observed)），CGDisplaySetDisplayMode 失败: CGError=\(setError.rawValue)")
+        return
+    }
+    // 写后读回：给 WindowServer 落盘时间，最多 1s（与 mirror-probe 读回同法）
+    var verified = false
+    for _ in 0..<5 {
+        if modeMatchesTarget(currentMode(ctx.displayID), ctx: ctx) {
+            verified = true
+            break
+        }
+        usleep(200_000)
+    }
+    if verified {
+        ctx.guardLog("检测到偏档（当前 \(observed)），已重设回 \(ctx.targetPointsW)x\(ctx.targetPointsH) HiDPI，读回验证通过")
+    } else {
+        let after = currentMode(ctx.displayID).map { "\($0.pointsWidth)x\($0.pointsHeight)" } ?? "?"
+        ctx.guardLog("检测到偏档（当前 \(observed)），已发重设但读回仍是 \(after)——重设未生效，需人工核查")
+    }
+}
+
+/// 重配回调（C 函数指针，上下文经 userInfo 传递）。只排去抖任务，不在回调线程干活。
+private func modeGuardReconfigurationCallback(_ display: CGDirectDisplayID,
+                                              _ flags: CGDisplayChangeSummaryFlags,
+                                              _ userInfo: UnsafeMutableRawPointer?) {
+    guard let userInfo = userInfo else { return }
+    let ctx = Unmanaged<ModeGuardContext>.fromOpaque(userInfo).takeUnretainedValue()
+    ctx.pending?.cancel()
+    let work = DispatchWorkItem {
+        verifyAndRestore(ctx: ctx)
+        ctx.pending = nil
+    }
+    ctx.pending = work
+    ctx.queue.asyncAfter(deadline: .now() + 0.3, execute: work)
+}
+
+/// 注册护档：进入 --hold 前调用。进程常驻期间一直生效（退出随进程清理，无需显式注销）。
+func startModeGuard(handle: VirtualDisplayHandle, logicalWidth: Int, logicalHeight: Int, hidpi: Bool) {
+    let ctx = ModeGuardContext(
+        displayID: handle.displayID,
+        pointsW: logicalWidth,
+        pointsH: logicalHeight,
+        pixelsW: hidpi ? logicalWidth * 2 : logicalWidth,
+        pixelsH: hidpi ? logicalHeight * 2 : logicalHeight
+    )
+    // ctx 需存活整个常驻期：retain 交给回调侧（passRetained），由注册的回调长期持有——
+    // 这里用全局集合持有引用更直白：护档上下文与进程同生命周期，无需配对释放。
+    modeGuardContexts.append(ctx)
+    let unmanaged = Unmanaged.passRetained(ctx)
+    let err = CGDisplayRegisterReconfigurationCallback(modeGuardReconfigurationCallback, unmanaged.toOpaque())
+    if err == .success {
+        errln("护档已启动：目标档 \(logicalWidth)x\(logicalHeight)\(hidpi ? " HiDPI(像素 \(logicalWidth * 2)x\(logicalHeight * 2))" : "")，拓扑重排后自动校验")
+        // 初始校验：注册发生在建屏之后，「屏幕加入」的重配事件已经错过——
+        // 新 product 首次上线时 WindowServer 默认配置可能就没落在目标档（2026-11-08 测试屏实测），
+        // 启动后延时 1s（等建屏配置落定）先校验一轮，不依赖后续事件。
+        let initial = DispatchWorkItem { verifyAndRestore(ctx: ctx) }
+        ctx.pending = initial
+        ctx.queue.asyncAfter(deadline: .now() + 1.0, execute: initial)
+    } else {
+        // passRetained 的引用没有消费方了，手动平衡避免泄漏
+        unmanaged.release()
+        errln("护档注册失败: CGError=\(err.rawValue)（--hold 退化为纯持有，无护档）")
+    }
+}
+
+// 护档上下文的全局存活集合（进程常驻期 = 护档期，无需配对释放；见 startModeGuard 注释）
+private var modeGuardContexts: [ModeGuardContext] = []
+
 // MARK: - doctor（环境自检，v0.3 增）
 
 /// 只读外部命令的 stdout（失败/非零退出返回 nil）。doctor 只用它读 pmset / pgrep，不派任何写动作。
@@ -516,6 +675,9 @@ case "create":
     // 屏活在本进程生命周期内：进程一退出，WindowServer 就收屏（没有跨进程销毁 API，见 remove）。
     withExtendedLifetime(handle) {
         if hold {
+            // 护档先行注册（goal-9dcbec）：合盖/开盖的拓扑重排会把本屏模式改写，
+            // 常驻期间监听重配并校验/重设，见「护档」节。
+            startModeGuard(handle: handle, logicalWidth: logicalWidth, logicalHeight: logicalHeight, hidpi: hidpi)
             errln("常驻持有中（Ctrl-C / SIGTERM 结束，屏随之销毁）")
             signal(SIGINT) { _ in exit(0) }
             signal(SIGTERM) { _ in exit(0) }
