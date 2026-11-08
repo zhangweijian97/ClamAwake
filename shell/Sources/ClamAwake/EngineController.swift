@@ -155,7 +155,7 @@ final class EngineController: ObservableObject {
     private func spawnEngine() throws -> Process {
         let p = Process()
         p.executableURL = Self.engineURL()
-        p.arguments = ["create", "\(Self.logicalWidth)", "\(Self.logicalHeight)", "--hidpi", "--hold"]
+        p.arguments = ["create", "\(Self.logicalWidth)", "\(Self.logicalHeight)", "--hidpi", "--hold", "--mirror-main"]
         p.standardOutput = FileHandle.nullDevice
         let errPipe = Pipe()
         p.standardError = errPipe
