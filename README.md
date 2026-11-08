@@ -262,4 +262,4 @@ stderr 会写明具体原因，常见三种：
 
 ## 署名
 
-ClamAwake is maintained by @<待填GitHub ID>.
+ClamAwake is maintained by @zhangweijian97.

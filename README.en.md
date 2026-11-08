@@ -266,4 +266,4 @@ If ClamAwake has been useful to you, buy the author a coffee: [Aifadian](https:/
 
 ## Maintainer
 
-ClamAwake is maintained by @<待填GitHub ID>.
+ClamAwake is maintained by @zhangweijian97.
