@@ -719,11 +719,26 @@ private struct DoctorFinding {
     let advice: [String]   // 可执行建议（stderr，人读、agent 可照跑）
 }
 
+/// 当前二进制架构（doctor 的 engine_version 读数用）。
+private func doctorArch() -> String {
+    #if arch(arm64)
+    return "arm64"
+    #elseif arch(x86_64)
+    return "x86_64"
+    #else
+    return "unknown"
+    #endif
+}
+
 /// doctor 子命令主体。stdout 每行一项 `check=<key> result=<...> detail=<...>`（机器可读），
 /// 诊断与建议走 stderr（既有约定）。返回退出码：有 fail → 1；warn 不置 1（注意但可继续）。
 private func runDoctor() -> Int32 {
     var findings: [DoctorFinding] = []
     let osVersion = ProcessInfo.processInfo.operatingSystemVersionString
+
+    // 0. 引擎版本 —— 应用版与 DSH 插件各自打包引擎，版本是两者是否同步的锚
+    findings.append(DoctorFinding(key: "engine_version", result: "pass",
+                                  detail: "version=\(engineVersion) arch=\(doctorArch())", advice: []))
 
     // 1. 私有类可用性 —— 整个工具的地基，缺了什么都没法做
     if NSClassFromString("CGVirtualDisplay") != nil {
