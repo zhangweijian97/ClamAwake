@@ -48,7 +48,8 @@ import Darwin
 
 let usage = """
 用法:
-  vd-engine create <W> <H> [--hidpi] [--hold]   建虚拟屏（逻辑分辨率 WxH），成功后 stdout 打印屏 id
+  vd-engine create <W> <H> [--hidpi] [--hold] [--mirror-main]
+                                                 建虚拟屏（逻辑分辨率 WxH），成功后 stdout 打印屏 id
   vd-engine remove <id>                          销毁指定虚拟屏
   vd-engine list                                 列出全部在线显示器（只读）
   vd-engine hi <id>                              打印指定屏的 HiDPI 情况（只读）
@@ -61,6 +62,10 @@ let usage = """
            偏离目标档则重设（goal-9dcbec：合盖触发 WindowServer 默认配置导致塌档）；
            镜像基线（部署序列 mirror-probe 建立的「虚拟屏镜像主屏」）确立后，
            检测到镜像解除自动重挂（2026-11-08 回炉扩查，遗留①护镜像并入）
+  --mirror-main  仅 --hold 有意义：建屏后启动即自动挂主屏镜像并确立护档镜像基线
+                 （launchd/登录自启形态用——launchd 拉起的新进程=新建屏，镜像基线
+                 不会自动回来，须启动即自挂）；失败只记日志不退出（建屏保活主语义
+                 不变），需人工 mirror-probe 建基线（f8e4a9，2026-11-08）
 
 退出码: 0 成功 / 1 运行错 / 2 用法错
 """
@@ -516,7 +521,9 @@ private func modeGuardReconfigurationCallback(_ display: CGDirectDisplayID,
 }
 
 /// 注册护档：进入 --hold 前调用。进程常驻期间一直生效（退出随进程清理，无需显式注销）。
-func startModeGuard(handle: VirtualDisplayHandle, logicalWidth: Int, logicalHeight: Int, hidpi: Bool) {
+/// mirrorMain=true（启动参数 --mirror-main，f8e4a9）：注册成功后启动即自动挂主屏镜像并确立基线——
+/// launchd/登录自启拉起的新进程=新建屏，镜像基线不会自动回来，必须启动即自挂。
+func startModeGuard(handle: VirtualDisplayHandle, logicalWidth: Int, logicalHeight: Int, hidpi: Bool, mirrorMain: Bool = false) {
     let ctx = ModeGuardContext(
         displayID: handle.displayID,
         pointsW: logicalWidth,
@@ -537,6 +544,20 @@ func startModeGuard(handle: VirtualDisplayHandle, logicalWidth: Int, logicalHeig
         let initial = DispatchWorkItem { verifyAndRestore(ctx: ctx) }
         ctx.pending = initial
         ctx.queue.asyncAfter(deadline: .now() + 1.0, execute: initial)
+        // --mirror-main（f8e4a9，2026-11-08）：启动即自挂主屏镜像，成功置基线（此后护档才认
+        // 「镜像解除」并自动重挂）。失败不退出——建屏保活是主语义，基线缺席时护档不重挂，
+        // 日志写明需人工 mirror-probe 建基线（重试入口=下次重配事件前的部署序列）。
+        if mirrorMain {
+            let mainID = CGMainDisplayID()
+            if mainID == ctx.displayID {
+                ctx.guardLog("--mirror-main：本屏即主屏（无内屏可镜像），忽略")
+            } else if remirrorToMain(ctx: ctx, mainID: mainID) {
+                ctx.mirrorBaselineEstablished = true
+                ctx.guardLog("镜像基线已建立（启动参数 --mirror-main），mirror_of=\(mainID)")
+            } else {
+                ctx.guardLog("--mirror-main：镜像基线建立失败（读回 mirror_of 非主屏）——需人工 mirror-probe 建基线，基线确立前护档不会自动重挂")
+            }
+        }
     } else {
         // passRetained 的引用没有消费方了，手动平衡避免泄漏
         unmanaged.release()
@@ -724,13 +745,18 @@ switch args[1] {
 case "create":
     var hidpi = false
     var hold = false
+    var mirrorMain = false
     var positional: [String] = []
     for arg in args.dropFirst(2) {
         switch arg {
         case "--hidpi": hidpi = true
         case "--hold": hold = true
+        case "--mirror-main": mirrorMain = true
         default: positional.append(arg)
         }
+    }
+    if mirrorMain && !hold {
+        errln("注意：--mirror-main 仅在 --hold 常驻模式下有意义，本次忽略")
     }
     guard positional.count == 2,
           let logicalWidth = Int(positional[0]),
@@ -788,7 +814,7 @@ case "create":
             // 护档注册（goal-9dcbec）：合盖/开盖的拓扑重排会把本屏模式改写，
             // 常驻期间监听重配并校验/重设，见「护档」节。须在 NSApplication 初始化之后注册
             // （通知投递依赖 app 形状的 CGS 连接）。
-            startModeGuard(handle: handle, logicalWidth: logicalWidth, logicalHeight: logicalHeight, hidpi: hidpi)
+            startModeGuard(handle: handle, logicalWidth: logicalWidth, logicalHeight: logicalHeight, hidpi: hidpi, mirrorMain: mirrorMain)
             errln("常驻持有中（Ctrl-C / SIGTERM 结束，屏随之销毁）")
             signal(SIGINT) { _ in exit(0) }
             signal(SIGTERM) { _ in exit(0) }

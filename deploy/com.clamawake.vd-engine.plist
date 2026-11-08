@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  ClamAwake vd-engine LaunchAgent（生产正本，f8e4a9 2026-11-08）
+  部署：cp 本文件到 ~/Library/LaunchAgents/com.clamawake.vd-engine.plist 后
+        launchctl load ~/Library/LaunchAgents/com.clamawake.vd-engine.plist
+  语义：RunAtLoad=登录自启；KeepAlive={SuccessfulExit:false, Crashed:true}=
+        崩溃/被 SIGKILL 非零退出自动拉起，SIGTERM 优雅退出（exit 0）不复活（unload 干净收场）；
+        --mirror-main=新进程新屏启动即自动挂内屏镜像并确立护档基线（重启后 AI 画布自动回来）。
+-->
+<dict>
+    <key>Label</key>
+    <string>com.clamawake.vd-engine</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/zhangweijian/个人成长系统/项目库/研发项目/ClamAwake/构建/vd-engine</string>
+        <string>create</string>
+        <string>1800</string>
+        <string>1169</string>
+        <string>--hidpi</string>
+        <string>--hold</string>
+        <string>--mirror-main</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/tmp/vd-prod.out</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/vd-prod.err</string>
+</dict>
+</plist>
