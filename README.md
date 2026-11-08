@@ -2,6 +2,8 @@
 
 **简体中文** | [English](README.en.md)
 
+<p align="center"><img src="assets/AppIcon-1024.png" width="140" alt="ClamAwake"></p>
+
 合盖之后，机器照常运行 AI / 长任务，屏幕熄灭。
 
 ## 解决什么问题

@@ -2,6 +2,8 @@
 
 [简体中文](README.md) | **English**
 
+<p align="center"><img src="assets/AppIcon-1024.png" width="140" alt="ClamAwake"></p>
+
 With the lid closed, the machine keeps running AI tasks and long jobs — and the screen stays off.
 
 ## The problem
