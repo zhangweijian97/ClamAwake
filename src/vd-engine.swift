@@ -352,6 +352,14 @@ final class ModeGuardContext {
     // 镜像基线是否已确立（2026-11-08 回炉）：任一次校验读到 mirror_of==主屏 即置位，
     // 进程常驻期不复位——确立后「mirror_of ≠ 主屏」才判为镜像解除并自动重挂。
     var mirrorBaselineEstablished = false
+    // 内屏档位守护（2026-11-08 合盖塌档修复 v2）：合盖→开盖时 WindowServer 重建整套显示配置，
+    // 会把内屏重置成默认档（实测 1800x1169 → 1512x982）。恢复目标=内屏离线前最后一轮在线时
+    // 读到的档位（用户合盖前手动改的分辨率也保留），只在重新上线后的 5s 窗口内恢复；
+    // 窗口外正常在线时只持续记录档位、不干预——用户在线改分辨率不会被锁死。
+    var innerDisplayID: CGDirectDisplayID?
+    var innerLastSeenMode: ModeReading?
+    var innerWasOnline = true
+    var innerRestoreDeadline: Date?
 
     init(displayID: CGDirectDisplayID, pointsW: Int, pointsH: Int, pixelsW: Int, pixelsH: Int) {
         self.displayID = displayID
@@ -376,19 +384,26 @@ private func modeMatchesTarget(_ mode: ModeReading?, ctx: ModeGuardContext) -> B
         && mode.pixelsHeight == ctx.targetPixelsH
 }
 
-/// 在目标屏的档位列表里找 points/pixels 双匹配的 CGDisplayMode（CGDisplaySetDisplayMode 需要档位对象）。
-private func findTargetMode(ctx: ModeGuardContext) -> CGDisplayMode? {
+/// 在指定屏的档位列表里找 points/pixels 双匹配的 CGDisplayMode（CGDisplaySetDisplayMode 需要档位对象）。
+private func findMode(on displayID: CGDirectDisplayID, pointsW: Int, pointsH: Int, pixelsW: Int, pixelsH: Int) -> CGDisplayMode? {
     let opts = [kCGDisplayShowDuplicateLowResolutionModes: kCFBooleanTrue as Any] as CFDictionary
-    guard let array = CGDisplayCopyAllDisplayModes(ctx.displayID, opts) else { return nil }
+    guard let array = CGDisplayCopyAllDisplayModes(displayID, opts) else { return nil }
     for index in 0..<CFArrayGetCount(array) {
         let raw = CFArrayGetValueAtIndex(array, index)
         guard let mode = unsafeBitCast(raw, to: CGDisplayMode?.self) else { continue }
-        if mode.width == ctx.targetPointsW && mode.height == ctx.targetPointsH
-            && mode.pixelWidth == ctx.targetPixelsW && mode.pixelHeight == ctx.targetPixelsH {
+        if mode.width == pointsW && mode.height == pointsH
+            && mode.pixelWidth == pixelsW && mode.pixelHeight == pixelsH {
             return mode
         }
     }
     return nil
+}
+
+/// 本引擎虚拟屏的目标档查询（findMode 的既有调用形态）。
+private func findTargetMode(ctx: ModeGuardContext) -> CGDisplayMode? {
+    findMode(on: ctx.displayID,
+             pointsW: ctx.targetPointsW, pointsH: ctx.targetPointsH,
+             pixelsW: ctx.targetPixelsW, pixelsH: ctx.targetPixelsH)
 }
 
 /// 把本屏重挂回主屏镜像（镜像基线防护动作，2026-11-08 回炉）。
@@ -420,6 +435,64 @@ private func remirrorToMain(ctx: ModeGuardContext, mainID: CGDirectDisplayID) ->
     return false
 }
 
+/// 内屏档位守护（2026-11-08 合盖塌档修复 v2）：
+/// 合盖→开盖时 WindowServer 重建整套显示配置，会把内屏重置成默认档（实测 1800x1169 → 1512x982）。
+/// 恢复目标=内屏离线前最后一轮在线读到的档位；只在重新上线后的 5s 窗口内恢复；窗口外只记录不干预。
+private func restoreInnerIfJustReturned(ctx: ModeGuardContext) {
+    guard let innerID = ctx.innerDisplayID else { return }
+    let online = onlineDisplayIDs().contains(innerID)
+    if online && !ctx.innerWasOnline {
+        ctx.innerRestoreDeadline = Date().addingTimeInterval(5)
+        let target = ctx.innerLastSeenMode.map {
+            "\($0.pointsWidth)x\($0.pointsHeight) 像素\($0.pixelsWidth)x\($0.pixelsHeight)"
+        } ?? "未记录"
+        ctx.guardLog("内屏重新上线（id=\(innerID)），进入 5s 档位恢复窗口（恢复目标=离线前 \(target)）")
+    }
+    ctx.innerWasOnline = online
+    guard online else { return }
+    let inWindow = ctx.innerRestoreDeadline.map { Date() <= $0 } ?? false
+    if !inWindow {
+        ctx.innerLastSeenMode = currentMode(innerID)
+        return
+    }
+    guard let target = ctx.innerLastSeenMode, let reading = currentMode(innerID) else {
+        ctx.guardLog("内屏档位恢复窗口内读数缺失（目标或当前模式读不到），本轮跳过")
+        return
+    }
+    if reading.pointsWidth == target.pointsWidth && reading.pointsHeight == target.pointsHeight
+        && reading.pixelsWidth == target.pixelsWidth && reading.pixelsHeight == target.pixelsHeight {
+        return
+    }
+    let observed = "\(reading.pointsWidth)x\(reading.pointsHeight) 像素\(reading.pixelsWidth)x\(reading.pixelsHeight)"
+    let base = "\(target.pointsWidth)x\(target.pointsHeight) 像素\(target.pixelsWidth)x\(target.pixelsHeight)"
+    guard let mode = findMode(on: innerID,
+                              pointsW: target.pointsWidth, pointsH: target.pointsHeight,
+                              pixelsW: target.pixelsWidth, pixelsH: target.pixelsHeight) else {
+        ctx.guardLog("内屏合盖塌档（当前 \(observed)，目标 \(base)），档位列表里找不到目标档，放弃恢复")
+        return
+    }
+    let setError = CGDisplaySetDisplayMode(innerID, mode, nil)
+    guard setError == .success else {
+        ctx.guardLog("内屏合盖塌档（当前 \(observed)），CGDisplaySetDisplayMode 失败: CGError=\(setError.rawValue)")
+        return
+    }
+    var verified = false
+    for _ in 0..<5 {
+        if let now = currentMode(innerID),
+           now.pointsWidth == target.pointsWidth && now.pointsHeight == target.pointsHeight,
+           now.pixelsWidth == target.pixelsWidth && now.pixelsHeight == target.pixelsHeight {
+            verified = true
+            break
+        }
+        usleep(200_000)
+    }
+    if verified {
+        ctx.guardLog("内屏合盖塌档（当前 \(observed)），已恢复离线前档位 \(base)，读回验证通过")
+    } else {
+        ctx.guardLog("内屏合盖塌档（当前 \(observed)），已发恢复但读回未达目标档，需人工核查")
+    }
+}
+
 /// 校验本屏镜像与模式并按需恢复（在护档串行队列上执行）。成功/失败都打 stderr 日志（重定向到 vd-prod.err 可查）。
 ///
 /// 双查（2026-11-08 回炉，护镜像并入；查序=镜像先于档位）：
@@ -433,6 +506,16 @@ private func verifyAndRestore(ctx: ModeGuardContext) {
         ctx.guardLog("目标屏 \(ctx.displayID) 不在线，跳过校验")
         return
     }
+
+    // —— 显示配置是一份（2026-11-08 归并定性）——
+    // 合盖/开盖会让 WindowServer 重排整套显示配置：拓扑（哪块屏在线）、镜像关系、各屏档位。
+    // 这三类字段此前按入口依次暴露、各自修过一次（虚拟屏档位 → 镜像关系 → 内屏档位）。
+    // 这里不再按入口打补丁，而按「期望配置」逐字段核对，每字段独立恢复、幂等：
+    //   1. 内屏档位：合盖→开盖塌档，恢复离线前档位（restoreInnerIfJustReturned）
+    //   2. 镜像关系：虚拟屏必须镜像内屏，解除则重挂（remirrorToMain）
+    //   3. 虚拟屏档位：本引擎屏偏离目标档则重设（findTargetMode + CGDisplaySetDisplayMode）
+    // 再接新的显示对象（外接屏、缩放等）时在此追加同一形态的核对，不再另起恢复器。
+    restoreInnerIfJustReturned(ctx: ctx)
 
     // —— 镜像查 ——
     let mainID = CGMainDisplayID()
@@ -534,6 +617,14 @@ func startModeGuard(handle: VirtualDisplayHandle, logicalWidth: Int, logicalHeig
     // ctx 需存活整个常驻期：retain 交给回调侧（passRetained），由注册的回调长期持有——
     // 这里用全局集合持有引用更直白：护档上下文与进程同生命周期，无需配对释放。
     modeGuardContexts.append(ctx)
+    // 记录内屏（建屏时的主屏）与当前档位：合盖塌档恢复的起点（2026-11-08）。
+    let mainAtStart = CGMainDisplayID()
+    if mainAtStart != handle.displayID, let mainMode = currentMode(mainAtStart) {
+        ctx.innerDisplayID = mainAtStart
+        ctx.innerLastSeenMode = mainMode
+        errln("内屏档位记录：id=\(mainAtStart) "
+            + "\(mainMode.pointsWidth)x\(mainMode.pointsHeight) 像素\(mainMode.pixelsWidth)x\(mainMode.pixelsHeight)")
+    }
     let unmanaged = Unmanaged.passRetained(ctx)
     let err = CGDisplayRegisterReconfigurationCallback(modeGuardReconfigurationCallback, unmanaged.toOpaque())
     if err == .success {
