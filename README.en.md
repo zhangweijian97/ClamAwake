@@ -157,12 +157,9 @@ Then close the lid: the screen goes dark, the machine keeps running, and visual 
 
 ### Running inside DeepSeek Harness (plugin form)
 
-`dsh-plugin/` binds the keep-alive to the DeepSeek Harness (DSH) host lifecycle: host starts = recipe runs (virtual display + `caffeinate -d`); host stops = its own children are terminated. An existing `kya=yes` display is reused, never duplicated; an unexpectedly exited engine is restarted automatically (backoff from 1s, capped at 30s).
+The DSH plugin now lives in its own repository: [zhangweijian97/dsh-clamawake](https://github.com/zhangweijian97/dsh-clamawake). It binds this app's engine to the DSH host lifecycle: host starts = recipe runs; host stops = its own children are terminated. An existing `kya=yes` display is reused, never duplicated, and an unexpectedly exited engine is restarted with backoff (1s → 30s).
 
-Install: `install_bundle` in the plugin manager with the absolute path to `dsh-plugin/`. The plugin itself is the only switch — there are no other settings. After editing the code, re-enable the plugin to load the fresh module.
-
-If a lid close/reopen makes the system re-lay-out display settings and knocks the built-in display off its mode, the engine's mode guard restores the mode that was active before the lid closed, within a short window after the display comes back. The app and the plugin share the same engine source, so the fix applies to both.
-
+The engine ships with this app; the plugin repository holds code only — install ClamAwake first, then the plugin. See the plugin README for installation details.
 
 ## For AI agents
 

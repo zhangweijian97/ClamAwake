@@ -157,12 +157,9 @@ caffeinate -d &
 
 ### 在 DeepSeek Harness 里用（插件形态）
 
-`dsh-plugin/` 把保活绑到 DeepSeek Harness（DSH）宿主的生命周期：DSH 起来＝配方在跑（虚拟屏 + `caffeinate -d`），DSH 停＝收掉自有子进程；已有 `kya=yes` 屏时复用、不重建；引擎意外退出自动重启（退避 1s 起、30s 封顶）。
+DSH 插件已独立成仓：[zhangweijian97/dsh-clamawake](https://github.com/zhangweijian97/dsh-clamawake)。它把本应用的引擎绑到 DSH 宿主生命周期上：宿主起来＝保活配方在跑，宿主停止＝收掉自有子进程；已有 `kya=yes` 屏时复用不重建；引擎意外退出自动重启（退避 1s→30s）。
 
-装载：插件管理器的 `install_bundle`，目标指向 `dsh-plugin/` 的绝对路径；开关就是插件本身，没有其它设置。装好后改代码，重新启用插件即可让宿主读到新模块。
-
-合盖→开盖时若系统把内屏分辨率重排打偏，引擎护档会在内屏重新亮起后的窗口期内恢复成合盖前的档位——应用版与插件版共用同一份引擎源码，修复对两者同时生效。
-
+引擎随本应用提供，插件仓只放代码——所以先装 ClamAwake，再装插件。装载方式与细节见插件仓 README。
 
 ## For AI agents
 
