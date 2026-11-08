@@ -22,6 +22,7 @@ echo "==> [2/4] 组装 .app 骨架"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$ROOT/shell/.build/release/ClamAwake" "$APP/Contents/MacOS/ClamAwake"
+cp "$ROOT/assets/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 echo "==> [3/4] 编译引擎 vd-engine 入 Resources（只编译 src/ 源码，不改源码）"
 swiftc -O "$ROOT/src/vd-engine.swift" -o "$APP/Contents/Resources/vd-engine"
@@ -36,6 +37,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 	<string>ClamAwake</string>
 	<key>CFBundleExecutable</key>
 	<string>ClamAwake</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.clamawake.app</string>
 	<key>CFBundleInfoDictionaryVersion</key>
