@@ -262,7 +262,7 @@ Both are MIT-licensed and served as reference implementations for building virtu
 
 ## Support
 
-If ClamAwake has been useful to you, buy the author a coffee: [Aifadian](https://afdian.net/a/<待填>)
+If ClamAwake has been useful to you, buy the author a coffee: [Aifadian](https://afdian.net/a/blackcatbon)
 
 ## Maintainer
 

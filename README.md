@@ -258,7 +258,7 @@ stderr 会写明具体原因，常见三种：
 
 ## 赞赏
 
-如果 ClamAwake 帮到了你，请作者喝杯咖啡：[爱发电](https://afdian.net/a/<待填>)
+如果 ClamAwake 帮到了你，请作者喝杯咖啡：[爱发电](https://afdian.net/a/blackcatbon)
 
 ## 署名
 
