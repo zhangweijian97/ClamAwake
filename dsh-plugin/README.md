@@ -14,7 +14,7 @@
 | 插件 start（`apply` → `ctx.effect` setup） | 解析引擎二进制 → 核对 `/usr/bin/caffeinate` 存在 → 跑一次只读 `vd-engine list` → **已有 `kya=yes` 的屏则复用不重建**（判据与 `vd-engine doctor` 的 `keepalive_running` 同源：KYA vendor 标记 `0x4B5941`）→ 否则 spawn 建屏子进程 + caffeinate 子进程，异步尾段读回屏 id 并再 list 一遍交叉核验（执行后验证，不信子进程一面之词） |
 | 插件 dispose（`ctx.effect` 的 disposer） | **只 SIGTERM 自己 spawn 的子进程**（引擎建屏子进程 + caffeinate），3s 未退升级 SIGKILL 兜底；屏随引擎子进程退出消失 |
 
-**所有权边界（安全红线）**：复用的外部屏（别的 vd-engine 进程 / 菜单栏壳 / 其他虚拟屏工具持有）**绝不动**——本插件 dispose 不碰任何不是自己 spawn 的进程。引擎子进程意外退出时打显著日志（保活失效），不做自动重启（重启策略属后续切片）。
+**所有权边界（安全红线）**：复用的外部屏（别的 vd-engine 进程 / 菜单栏壳 / 其他虚拟屏工具持有）**绝不动**——本插件 dispose 不碰任何不是自己 spawn 的进程。引擎子进程意外退出时打显著日志并自动重启（退避 1s 起、每次翻倍、30s 封顶；caffeinate 断言独立保留）。
 
 **日志**：`console.log` 前缀 `[clamawake]`，进宿主控制台输出（启动/复用/建屏/核验/停止各一行，失败带原因）。
 
@@ -84,7 +84,7 @@ node dsh-plugin/test-lifecycle.mjs
 ## 已知边界
 
 - **无 Config 导出**：配置只走环境变量（与 dsh-member/spacemgr 一致，无 UI 场景够用）。
-- **引擎意外退出不自拉起**：只打显著日志；自动重启策略（含退避）属后续切片。
+- **引擎意外退出自动重启（2026-11-08）**：子进程 exit 触发退避重启（1s 起、每次翻倍、30s 封顶），成功建屏后轮次归零；插件停止时清掉待执行的定时器，不再拉起。实测 `kill -9` 引擎后约 1s 恢复新屏，caffeinate 不断。
 - **真实 DSH 宿主装载已验收（2026-11-08）**：`install_bundle` 装载并在宿主激活（`application: applied`）；复用模式下挂自有 `caffeinate -d`、不动外部 kya=yes 屏；`set_plugin` 关闭只收自有 caffeinate（用户 ClamAwake.app 保活与外部屏原样），重新开启重挂。协议级自测（`node test-lifecycle.mjs`）同一轮通过：建屏 → 核验 → 拆屏 → 屏消失，复用路径不重复建屏、终态与基线一致。
 - **宿主被强杀时的孤儿子进程（未验证）**：正常退出走 cordis dispose（SIGTERM 自有子进程）；若宿主进程被 `kill -9` 之类强杀，dispose 不执行，插件 spawn 的 vd-engine / caffeinate 可能成孤儿继续保活，需手动 `kill`（下次宿主启动时插件会按 kya 标记复用该屏）。
 - **GUI 宿主的环境变量缺口**：见「引擎二进制怎么来」——推荐 `bin/vd-engine` 自包含规避。

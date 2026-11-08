@@ -51,6 +51,8 @@ const CAFFEINATE = '/usr/bin/caffeinate'
 const LIST_TIMEOUT_MS = 5000            // 只读 list 的一次性上限
 const CREATE_ID_TIMEOUT_MS = 10000      // 引擎自己最多等 3s WindowServer，留足余量
 const KILL_GRACE_MS = 3000              // dispose 的 SIGTERM 升级 SIGKILL 的宽限
+const RESTART_BASE_MS = 1000            // 引擎意外退出后的重启退避：1s 起、每次翻倍
+const RESTART_MAX_MS = 30000            // 退避封顶
 
 const PLUGIN_DIR = path.dirname(fileURLToPath(import.meta.url))
 
@@ -212,6 +214,8 @@ function startKeepalive() {
     screen_ids: [],           // 本插件关心的屏：created=自建屏 id；reused=复用的外部屏 id
     started_at: new Date().toISOString(),
     stopped: false,
+    restart_attempt: 0,       // 自动重启轮次（成功建屏归零）
+    restart_timer: null,      // 待执行的退避重启定时器
   }
 
   if (kyaScreens.length > 0 && reuseEnabled()) {
@@ -230,15 +234,25 @@ function startKeepalive() {
   spawnCaffeinateFor(state)
   console.log(`${LOG} 已 spawn 引擎建屏子进程 pid=${child.pid}`
     + `（vd-engine create ${SCREEN_W} ${SCREEN_H} --hidpi --hold --mirror-main，engine=${engine}）`)
+  watchEngine(state, child, screenIdPromise, 0)
 
-  // 异步尾段：确认屏 id + 交叉核验在线（执行后验证——不信子进程一面之词，自己 list 一遍）
+  return state
+}
+
+/**
+ * 挂接一个引擎建屏子进程：确认屏 id + 交叉核验（执行后验证——不信子进程一面之词，自己 list），
+ * 并把「意外退出」接到退避重启上（attempt=0 首次，≥1 重启轮次）。
+ */
+function watchEngine(state, child, screenIdPromise, attempt) {
   screenIdPromise.then(({ screenId }) => {
     if (state.stopped) return
     state.screen_ids = [screenId]
-    console.log(`${LOG} 引擎建屏成功 id=${screenId}（pid=${child.pid}），交叉核验在线状态…`)
+    state.restart_attempt = 0
+    console.log(`${LOG} 引擎建屏成功 id=${screenId}（pid=${child.pid}）`
+      + `${attempt > 0 ? `，第 ${attempt} 次重启后恢复` : ''}，交叉核验在线状态…`)
     let confirm
     try {
-      confirm = listScreens(engine)
+      confirm = listScreens(state.engine)
     } catch (error) {
       console.warn(`${LOG} 建屏后核验失败（list 本身出错）：${error.message}`)
       return
@@ -253,18 +267,38 @@ function startKeepalive() {
   }, (error) => {
     if (state.stopped) return
     console.warn(`${LOG} 建屏失败：${error.message}`)
-    // 配方不完整：屏没立起来，caffeinate 单独留着没有意义，一并收掉
-    if (state.caffeinate_child && state.caffeinate_child.exitCode === null && !state.caffeinate_child.signalCode) {
-      try { state.caffeinate_child.kill('SIGTERM') } catch {}
-    }
+    restartEngine(state, attempt + 1)
   })
+
   child.on('exit', (code, signal) => {
     if (state.stopped) return
     console.warn(`${LOG} 引擎子进程意外退出（pid=${child.pid} code=${code} signal=${signal}）——`
-      + `自建虚拟屏随之消失，保活失效；本插件不做自动重启，需要重载插件（或重启 DSH）恢复`)
+      + `自建虚拟屏随之消失，保活失效；进入自动重启`)
+    restartEngine(state, attempt + 1)
   })
+}
 
-  return state
+/**
+ * 退避重启引擎建屏子进程：1s 起、每次翻倍、30s 封顶；插件停止（state.stopped）即不再重启。
+ * caffeinate 断言独立于屏，重启期间保留不重建。
+ */
+function restartEngine(state, attempt) {
+  if (state.stopped) return
+  if (state.restart_timer) return // 已有排程（exit 与建屏失败可能同时触发）
+  state.restart_attempt = attempt
+  const delay = Math.min(RESTART_BASE_MS * 2 ** Math.min(attempt - 1, 5), RESTART_MAX_MS)
+  console.warn(`${LOG} 第 ${attempt} 次自动重启引擎（${delay}ms 后）`)
+  const timer = setTimeout(() => {
+    state.restart_timer = null
+    if (state.stopped) return
+    const { child, screenIdPromise } = spawnEngineCreate(state.engine)
+    state.engine_child = child
+    state.engine_pid = child.pid
+    console.log(`${LOG} 重启引擎建屏子进程 pid=${child.pid}（第 ${attempt} 次）`)
+    watchEngine(state, child, screenIdPromise, attempt)
+  }, delay)
+  if (timer.unref) timer.unref()
+  state.restart_timer = timer
 }
 
 function spawnCaffeinateFor(state) {
@@ -278,6 +312,10 @@ function spawnCaffeinateFor(state) {
 function stopKeepalive(state) {
   if (!state || state.stopped) return
   state.stopped = true
+  if (state.restart_timer) {
+    clearTimeout(state.restart_timer)
+    state.restart_timer = null
+  }
   let killedAny = false
   for (const child of [state.engine_child, state.caffeinate_child]) {
     if (!child || child.exitCode !== null || child.signalCode !== null) continue
