@@ -1,4 +1,12 @@
-// vd-engine — 虚拟屏引擎（ClamAwake v0.4，--hold 常驻含护档；v0.3 新增 doctor 环境自检子命令）
+// vd-engine — 虚拟屏引擎（ClamAwake v0.4，--hold 常驻含护档+护镜像；v0.3 新增 doctor 环境自检子命令）
+//
+// 2026-11-08 回炉 r2（goal-9dcbec：护档重配监听生产实锤未生效，部署两小时零回调）：
+//   · 进程形状修复（实证根因，对照实验双确认）：CGS 重配通知只投递给 app 形状进程——
+//     纯 CLI（pause/dispatchMain/RunLoop 任一泵）注册成功却零事件，NSApplication 形状即时收到。
+//     hold 常驻改为 NSApplication(.accessory) + app.run()（原 `while true { pause() }`）；
+//   · App Nap 豁免：beginActivity(.userInitiated)，activity 对象进程常驻期全程持有；
+//   · 校验双查扩镜像：镜像基线（部署序列 mirror-probe 建立的「虚拟屏镜像主屏」）确立后，
+//     检测到 mirror_of ≠ 主屏自动重挂（护镜像并入，goal-9dcbec 遗留①）。
 //
 // 编译: swiftc -O src/vd-engine.swift -o vd-engine
 //
@@ -31,6 +39,7 @@
 //     NSClassFromString 取类 + dlsym("objc_msgSend") 拿消息派发指针，再按每个方法签名 unsafeBitCast 成
 //     @convention(c) 函数——Swift 无法给私有 ObjC 类写 extension，函数指针强转代替参考项目的 @interface 声明。
 
+import AppKit
 import CoreGraphics
 import Foundation
 import Darwin
@@ -49,7 +58,9 @@ let usage = """
   --hidpi  逻辑 WxH、像素 2Wx2H（例: 1800 1169 --hidpi → 像素 3600x2338，HiDPI 档进模式列表）
   --hold   建完不退出，前台常驻持有该屏（Ctrl-C / SIGTERM 结束，屏随之销毁）；
            常驻期间开启护档：显示拓扑重排（合盖/开盖/接拔屏）后自动校验本屏模式，
-           偏离目标档则重设（goal-9dcbec：合盖触发 WindowServer 默认配置导致塌档）
+           偏离目标档则重设（goal-9dcbec：合盖触发 WindowServer 默认配置导致塌档）；
+           镜像基线（部署序列 mirror-probe 建立的「虚拟屏镜像主屏」）确立后，
+           检测到镜像解除自动重挂（2026-11-08 回炉扩查，遗留①护镜像并入）
 
 退出码: 0 成功 / 1 运行错 / 2 用法错
 """
@@ -314,7 +325,14 @@ func waitForNewDisplay(baseline: [CGDirectDisplayID], expected: CGDirectDisplayI
 //   · 重配事件的主体常常不是虚拟屏（合盖时事件主体是内屏 removed），所以任何重配事件都触发校验；
 //   · 校验动作幂等（模式匹配即不动），连环重排（合盖+开盖）靠 300ms 去抖合并为一次校验；
 //   · CGDisplayCopyDisplayMode 返回 NULL ≠ 塌档（镜像组 master 场景会返回 NULL，见 currentMode 注释），
-//     NULL 只记日志不重设，避免在镜像场景误动作。
+//     NULL 只记日志不重设，避免在镜像场景误动作；
+//   · 镜像防护（2026-11-08 回炉，遗留①）：镜像基线确立（任一次校验读到 mirror_of==主屏）后，
+//     检测到 mirror_of ≠ 主屏 → 重挂主屏（API 用法照抄 mirror-probe mirror）。
+//     基线未确立（fresh start，部署序列稍后由 mirror-probe 建基线）只记日志不动作——
+//     避免把「启动时还没有镜像」误判成「镜像被解除」，也避免与部署序列抢拍；
+//   · 通知投递（2026-11-08 回炉二修）：重配通知只投递给 app 形状进程（对照实验实证，
+//     见文件头与 hold 分支注释）——hold 常驻改 NSApplication(.accessory)+app.run()；
+//     另以 beginActivity(.userInitiated) 豁免 App Nap（nohup 后台长跑的交付抑制面）。
 
 /// 护档上下文：C 回调不能捕获 Swift 上下文，经 userInfo 指针传递（Unmanaged 来回）。
 final class ModeGuardContext {
@@ -326,6 +344,9 @@ final class ModeGuardContext {
     // 串行队列承载去抖与校验动作；重配回调来自 WindowServer 任意线程，不能在回调里直接干活
     let queue = DispatchQueue(label: "vd-engine.mode-guard")
     var pending: DispatchWorkItem?
+    // 镜像基线是否已确立（2026-11-08 回炉）：任一次校验读到 mirror_of==主屏 即置位，
+    // 进程常驻期不复位——确立后「mirror_of ≠ 主屏」才判为镜像解除并自动重挂。
+    var mirrorBaselineEstablished = false
 
     init(displayID: CGDirectDisplayID, pointsW: Int, pointsH: Int, pixelsW: Int, pixelsH: Int) {
         self.displayID = displayID
@@ -365,12 +386,83 @@ private func findTargetMode(ctx: ModeGuardContext) -> CGDisplayMode? {
     return nil
 }
 
-/// 校验本屏模式并按需重设（在护档串行队列上执行）。成功/失败都打 stderr 日志（重定向到 vd-prod.err 可查）。
+/// 把本屏重挂回主屏镜像（镜像基线防护动作，2026-11-08 回炉）。
+/// API 用法照抄 mirror-probe mirror：CGBegin → CGConfigureDisplayMirrorOfDisplay(slave, master)
+/// → CGComplete(.forSession)，方向 slave=本引擎虚拟屏、master=主屏（内屏）。
+/// 返回重挂是否读回验证通过（最多 1s，与 mirror-probe 读回同法）。
+private func remirrorToMain(ctx: ModeGuardContext, mainID: CGDirectDisplayID) -> Bool {
+    var config: CGDisplayConfigRef?
+    var result = CGBeginDisplayConfiguration(&config)
+    guard result == .success, let config = config else {
+        ctx.guardLog("镜像重挂：CGBeginDisplayConfiguration 失败: CGError=\(result.rawValue)")
+        return false
+    }
+    result = CGConfigureDisplayMirrorOfDisplay(config, ctx.displayID, mainID)
+    guard result == .success else {
+        CGCancelDisplayConfiguration(config)
+        ctx.guardLog("镜像重挂：CGConfigureDisplayMirrorOfDisplay(slave=\(ctx.displayID), master=\(mainID)) 失败: CGError=\(result.rawValue)")
+        return false
+    }
+    result = CGCompleteDisplayConfiguration(config, .forSession)
+    guard result == .success else {
+        ctx.guardLog("镜像重挂：CGCompleteDisplayConfiguration(.forSession) 失败: CGError=\(result.rawValue)")
+        return false
+    }
+    for _ in 0..<5 {
+        if CGDisplayMirrorsDisplay(ctx.displayID) == mainID { return true }
+        usleep(200_000)
+    }
+    return false
+}
+
+/// 校验本屏镜像与模式并按需恢复（在护档串行队列上执行）。成功/失败都打 stderr 日志（重定向到 vd-prod.err 可查）。
+///
+/// 双查（2026-11-08 回炉，护镜像并入；查序=镜像先于档位）：
+///   1. 镜像查：基线确立后 mirror_of ≠ 主屏 → 重挂主屏+读回验证；重挂成功即返回
+///      （重挂后档位随主屏=目标档，本轮档位查无需再做）；镜像正常也即返回
+///      （镜像态档位随主屏，档位查无意义且有伪判，见分支内注释）；基线未确立只记日志
+///      （fresh start 的独立态不是「镜像解除」，部署序列随后建基线）。
+///   2. 档位查：四元比对，偏档重设（原逻辑不变；仅独立态到达）。
 private func verifyAndRestore(ctx: ModeGuardContext) {
     guard onlineDisplayIDs().contains(ctx.displayID) else {
         ctx.guardLog("目标屏 \(ctx.displayID) 不在线，跳过校验")
         return
     }
+
+    // —— 镜像查 ——
+    let mainID = CGMainDisplayID()
+    if mainID == ctx.displayID {
+        // 本屏即主屏（合盖内屏被移除的独立态）：无内屏可镜像；档位查继续（独立态保档）
+        ctx.guardLog("本屏即主屏（无内屏可镜像），跳过镜像校验")
+    } else {
+        let mirrorOf = CGDisplayMirrorsDisplay(ctx.displayID)
+        let observed = mirrorOf == kCGNullDirectDisplay ? "none" : String(mirrorOf)
+        if mirrorOf == mainID {
+            if !ctx.mirrorBaselineEstablished {
+                ctx.mirrorBaselineEstablished = true
+                ctx.guardLog("镜像基线确立（mirror_of=\(mainID)）：此后检测到镜像解除将自动重挂")
+            } else {
+                ctx.guardLog("镜像正常（mirror_of=\(mainID)），不动作")
+            }
+            // 镜像态档位随主屏（读数=主屏档位或 NULL），档位查无意义且有伪判：
+            // 实测（2026-11-08 测试屏）镜像建立/重挂后 slave 档位读数=主屏档位，
+            // 目标档≠主屏档位时会被误判成偏档并发重设（本屏渲染本就跟随主屏，重设只改偏好+日志噪声）。
+            // 跳过本轮档位查；独立态（镜像未确立/本屏即主屏/重挂失败）的档位查不受影响。
+            return
+        } else if ctx.mirrorBaselineEstablished {
+            if remirrorToMain(ctx: ctx, mainID: mainID) {
+                ctx.guardLog("检测到镜像解除（mirror_of=\(observed)），已重挂到主屏 \(mainID)，读回验证通过")
+                ctx.mirrorBaselineEstablished = true
+                return
+            }
+            // 重挂未生效：不 return，继续档位校验（此时屏处于独立态，保档仍有意义）
+            ctx.guardLog("检测到镜像解除（mirror_of=\(observed)），已发重挂但读回仍是 mirror_of=\(CGDisplayMirrorsDisplay(ctx.displayID) == kCGNullDirectDisplay ? "none" : String(CGDisplayMirrorsDisplay(ctx.displayID)))——重挂未生效，需人工核查")
+        } else {
+            ctx.guardLog("镜像未确立（mirror_of=\(observed)，主屏=\(mainID)）——等待部署序列建立镜像基线，不动作")
+        }
+    }
+
+    // —— 档位查（原有逻辑） ——
     let current = currentMode(ctx.displayID)
     if current == nil {
         // NULL ≠ 塌档：镜像组 master 场景 CGDisplayCopyDisplayMode 返回 NULL（见 currentMode 注释），不动作
@@ -454,6 +546,10 @@ func startModeGuard(handle: VirtualDisplayHandle, logicalWidth: Int, logicalHeig
 
 // 护档上下文的全局存活集合（进程常驻期 = 护档期，无需配对释放；见 startModeGuard 注释）
 private var modeGuardContexts: [ModeGuardContext] = []
+
+// App Nap 豁免句柄（2026-11-08 回炉，9dcbec 嫌疑②）：进程常驻期全程持有，释放即豁免结束；
+// nil = 未启用（list/doctor/remove 等短命调用不断言）。豁免在 --hold 分支进入时启用。
+private var napActivity: NSObjectProtocol?
 
 // MARK: - doctor（环境自检，v0.3 增）
 
@@ -675,13 +771,30 @@ case "create":
     // 屏活在本进程生命周期内：进程一退出，WindowServer 就收屏（没有跨进程销毁 API，见 remove）。
     withExtendedLifetime(handle) {
         if hold {
-            // 护档先行注册（goal-9dcbec）：合盖/开盖的拓扑重排会把本屏模式改写，
-            // 常驻期间监听重配并校验/重设，见「护档」节。
+            // App Nap 豁免（2026-11-08 回炉，9dcbec 嫌疑②）：nohup 后台常驻进程默认可被 nap，
+            // CGS 通知/timer 交付被抑制（生产「短时自测过、长时生产死」的吻合形态之一）。
+            // 只断言 userInitiated，不加 .idleSystemSleepDisabled——合盖入睡边界归 ClamAwake
+            // 配方（caffeinate）管理，引擎越权禁睡会改变系统行为。
+            napActivity = ProcessInfo.processInfo.beginActivity(options: .userInitiated, reason: "vd-engine mode guard")
+            errln("App Nap 豁免已启用（userInitiated，进程常驻期全程持有）")
+            // 进程形状修复（2026-11-08 回炉二修，实证根因）：CGS 重配通知只投递给 app 形状进程。
+            // 对照实验（2026-11-08 11:3x，macOS 27.0）：同一事件流（displayplacer 偏档 + 镜像建立/解除）
+            // 下，纯 CLI 进程注册成功（CGError=0）却零事件——pause()/RunLoop.main.run() 任一泵都收不到；
+            // NSApplication 形状进程即时收到（flags=begin/SetMode/Moved/DesktopShapeChanged）。
+            // 原首修（RunLoop 泵）与实施单嫌疑①（pause() 睡死无泵）据此被实验否定——泵不是缺口，
+            // 进程形状才是。accessory 形状 = 无 Dock 图标无菜单栏的后台应用，重配通知通道随之激活。
+            let app = NSApplication.shared
+            app.setActivationPolicy(.accessory)
+            // 护档注册（goal-9dcbec）：合盖/开盖的拓扑重排会把本屏模式改写，
+            // 常驻期间监听重配并校验/重设，见「护档」节。须在 NSApplication 初始化之后注册
+            // （通知投递依赖 app 形状的 CGS 连接）。
             startModeGuard(handle: handle, logicalWidth: logicalWidth, logicalHeight: logicalHeight, hidpi: hidpi)
             errln("常驻持有中（Ctrl-C / SIGTERM 结束，屏随之销毁）")
             signal(SIGINT) { _ in exit(0) }
             signal(SIGTERM) { _ in exit(0) }
-            while true { pause() }
+            // NSApplication 主循环：app 形状的常驻泵（泵主 run loop + main queue + app 事件源），
+            // 永不返回，handle 由外层闭包持有；退出走上方 signal→exit(0)，语义与 pause() 版一致。
+            app.run()
         }
     }
     if !hold {
