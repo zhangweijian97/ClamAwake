@@ -44,6 +44,10 @@ import CoreGraphics
 import Foundation
 import Darwin
 
+/// 引擎版本：与 ClamAwake 应用版本对齐（build-app.sh 的 APP_VERSION）。
+/// DSH 插件装载时读 `vd-engine version` 与包内声明比对，用于发现「应用与插件的引擎不同步」。
+let engineVersion = "0.3.0"
+
 // MARK: - 用法与退出码
 
 let usage = """
@@ -54,6 +58,7 @@ let usage = """
   vd-engine list                                 列出全部在线显示器（只读）
   vd-engine hi <id>                              打印指定屏的 HiDPI 情况（只读）
   vd-engine doctor                               环境自检+可执行建议（只读；有阻塞问题时退出码 1）
+  vd-engine version                              打印引擎版本与架构（只读，一行机器可读：version=<x.y.z>）
 
 选项:
   --hidpi  逻辑 WxH、像素 2Wx2H（例: 1800 1169 --hidpi → 像素 3600x2338，HiDPI 档进模式列表）
@@ -1017,6 +1022,22 @@ case "hi":
     if hidpiModes.count > listLimit {
         print("hidpi_mode_omitted=\(hidpiModes.count - listLimit)")
     }
+    exit(0)
+
+case "version":
+    guard args.count == 2 else {
+        errln("参数错误：version 不接受参数\n\(usage)")
+        exit(2)
+    }
+    #if arch(arm64)
+    let arch = "arm64"
+    #elseif arch(x86_64)
+    let arch = "x86_64"
+    #else
+    let arch = "unknown"
+    #endif
+    print("version=\(engineVersion)")
+    print("arch=\(arch)")
     exit(0)
 
 case "doctor":
