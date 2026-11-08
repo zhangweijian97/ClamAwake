@@ -10,23 +10,31 @@ MacBook 合上盖子，macOS 默认直接进入睡眠——正在跑的 AI 任�
 
 ClamAwake 的做法：给系统接一块自建的虚拟屏，合盖后由虚拟屏接管显示、屏幕熄灭——机器照常跑，视觉采集不受影响。
 
-## 原理
+## 安装与使用（普通用户）
 
-核心是 macOS 的私有 `CGVirtualDisplay` 类族。这些类没有公开头文件，ClamAwake 用 `NSClassFromString` 取类、`objc_msgSend` 做消息派发，按每个方法的真实 ABI 强转函数指针来调用（Swift 无法给运行时注册的私有 ObjC 类写 extension）。私有类族没有 destroy API——虚拟屏的生命周期等于创建它的进程的生命周期，引擎用 `--hold` 前台常驻来持有屏幕。
+三步：
 
-合盖侧配合 `caffeinate -d` 显示断言（完整配方见下文）。另外，若你的机型合盖后仍会入睡，需要系统级禁睡：`pmset` 的 `SleepDisabled` 项（需 sudo），工具不代用户设置。`vd-engine doctor` 会读这一项，未禁睡时给出确切命令（见[快速上手](#快速上手首次运行)）。
+1. 从 [Releases](../../releases) 下载最新的 `ClamAwake.dmg`，双击打开；
+2. 把 ClamAwake 拖进「应用程序」文件夹；
+3. 在「应用程序」里**右键 ClamAwake → 打开**（首次需要这样通过 macOS 对未签名应用的保护），菜单栏出现贝壳图标。
 
-## 当前形态
+点菜单栏图标 →「开启保活」，完成。之后合盖：机器继续跑任务，屏幕熄灭；点「停止保活」或退出应用即恢复原状。
 
-目前包含两种形态：
+- 首次开启会弹一次管理员授权（系统级防睡眠设置，一次授权长期生效，全程不需要打开终端）；
+- 想开机自启：菜单里勾选「登录时启动」；
+- 卸载：退出应用后，把 ClamAwake 从「应用程序」拖进废纸篓即可，无残留。
+
+> 当前 DMG 为免签分发（ad-hoc 签名），所以首次打开需要第 3 步的右键操作；正式签名公证后会省去这一步。
+
+## 命令行用户（geek / AI 工程）
+
+菜单栏应用之外，仓库提供两个命令行工具与完整构建链：
 
 - `vd-engine` — 虚拟屏引擎（创建 / 查询虚拟屏，含 `doctor` 环境自检）
 - `mirror-probe` — 显示器镜像工具（虚拟屏与内屏建立 / 解除镜像）
-- 菜单栏壳（`shell/`）— SwiftUI 菜单栏应用：保活开关、状态显示、开机自启（SMAppService）、系统级防睡（首次使用弹管理员授权，一次授权长期生效，无需终端）
+- 菜单栏壳源码在 `shell/`；`scripts/make-dmg.sh` 一条命令产出 `dist/ClamAwake.dmg`
 
-构建与打包：`scripts/make-dmg.sh` 一条命令产出 `dist/ClamAwake.dmg`（免签 ad-hoc，双击安装即用）。
-
-## 快速上手（首次运行）
+### 快速上手（命令行）
 
 前提：macOS + [Xcode Command Line Tools](https://developer.apple.com/xcode/features/)（提供 swiftc；没装的话 `xcode-select --install`）。
 
@@ -220,6 +228,14 @@ kill -TERM "$ENGINE_PID"
 ### 错误处理约定
 
 任何非 0 退出码，stderr 都带原因，多数场景带可执行恢复动作（例：`remove` 的完整销毁路径说明；`status` 对离线 id 的「读数不可信」提示；`mirror` 指明哪个 id 不在线）。恢复动作照跑即可；stdout 的 `check=` / `id=` / 读数行才是程序化分支的依据。
+
+## 原理
+
+想了解实现机制的读者看这里。
+
+核心是 macOS 的私有 `CGVirtualDisplay` 类族。这些类没有公开头文件，ClamAwake 用 `NSClassFromString` 取类、`objc_msgSend` 做消息派发，按每个方法的真实 ABI 强转函数指针来调用（Swift 无法给运行时注册的私有 ObjC 类写 extension）。私有类族没有 destroy API——虚拟屏的生命周期等于创建它的进程的生命周期，引擎用 `--hold` 前台常驻来持有屏幕。
+
+合盖侧配合 `caffeinate -d` 显示断言（完整配方见上文）。另外，若你的机型合盖后仍会入睡，需要系统级禁睡：`pmset` 的 `SleepDisabled` 项（需 sudo），工具不代用户设置。`vd-engine doctor` 会读这一项，未禁睡时给出确切命令（见[快速上手](#快速上手命令行)）。
 
 ## 故障排查
 

@@ -10,23 +10,31 @@ Close a MacBook's lid and macOS goes to sleep by default — AI tasks, builds, d
 
 ClamAwake's approach: attach a self-created virtual display to the system. After the lid closes, the virtual display takes over and the real screen goes dark — the machine keeps running, and visual capture is unaffected.
 
-## How it works
+## Install & Use (everyone)
 
-The core is macOS's private `CGVirtualDisplay` class family. These classes have no public headers, so ClamAwake resolves them with `NSClassFromString`, dispatches messages through `objc_msgSend`, and casts function pointers according to each method's real ABI (Swift cannot declare extensions on private ObjC classes registered at runtime). The private class family has no destroy API — a virtual display's lifetime equals that of the process that created it, so the engine holds the display with a foreground `--hold` mode.
+Three steps:
 
-On the lid side, a `caffeinate -d` display assertion is used (full recipe below). Additionally, if your machine still falls asleep with the lid closed, you need a system-level sleep disable: the `SleepDisabled` flag in `pmset` (requires sudo) — the tool never sets it on the user's behalf. `vd-engine doctor` reads this flag and prints the exact command when sleep is not disabled (see [First run](#first-run)).
+1. Download the latest `ClamAwake.dmg` from [Releases](../../releases) and open it;
+2. Drag ClamAwake into the Applications folder;
+3. In Applications, **right-click ClamAwake → Open** (needed the first time to pass macOS's protection for unsigned apps). A shell icon appears in the menu bar.
 
-## Current state
+Click the menu bar icon → "Start Keep-Alive", done. From then on, closing the lid: the machine keeps running your tasks while the screen stays off. Click "Stop Keep-Alive" or quit the app to restore.
 
-Two forms ship today:
+- First start pops a one-time admin authorization (system-level sleep guard; one approval lasts forever — no terminal needed at any point);
+- For auto-start: enable "Launch at Login" in the menu;
+- To uninstall: quit the app, then move ClamAwake from Applications to the Trash. No leftovers.
+
+> The current DMG is ad-hoc signed, which is why step 3's right-click is needed the first time; proper signing & notarization will remove that step.
+
+## Command-line users (geeks / AI engineers)
+
+Beyond the menu bar app, the repo ships two CLI tools and the full build chain:
 
 - `vd-engine` — the virtual display engine (create / inspect virtual displays, plus a `doctor` environment self-check)
 - `mirror-probe` — the display mirroring tool (create / remove mirrors between the virtual display and the built-in display)
-- Menu bar shell (`shell/`) — a SwiftUI menu bar app: keep-alive toggle, status display, login item (SMAppService), system-level sleep guard (first use pops an admin authorization dialog once; no terminal required)
+- Menu bar shell source lives in `shell/`; `scripts/make-dmg.sh` produces `dist/ClamAwake.dmg` in one command
 
-Build & package: `scripts/make-dmg.sh` produces `dist/ClamAwake.dmg` in one command (ad-hoc unsigned; double-click to install).
-
-## First run
+### First run (CLI)
 
 Prerequisites: macOS with [Xcode Command Line Tools](https://developer.apple.com/xcode/features/) (provides swiftc; if missing, run `xcode-select --install`).
 
@@ -224,6 +232,14 @@ kill -TERM "$ENGINE_PID"
 ### Error-handling conventions
 
 Every non-zero exit code comes with a reason on stderr, and most carry an executable recovery action (e.g. `remove`'s full destruction path; `status`'s "reading untrustworthy" notice for offline ids; `mirror` naming which id is offline). Run the recovery action as printed; branch programmatically only on exit codes and stdout's `check=` / `id=` / reading lines.
+
+## How it works
+
+For readers who want the mechanism.
+
+The core is macOS's private `CGVirtualDisplay` class family. These classes have no public headers, so ClamAwake resolves them with `NSClassFromString`, dispatches messages through `objc_msgSend`, and casts function pointers according to each method's real ABI (Swift cannot declare extensions on private ObjC classes registered at runtime). The private class family has no destroy API — a virtual display's lifetime equals that of the process that created it, so the engine holds the display with a foreground `--hold` mode.
+
+On the lid side, a `caffeinate -d` display assertion is used (full recipe above). Additionally, if your machine still falls asleep with the lid closed, you need a system-level sleep disable: the `SleepDisabled` flag in `pmset` (requires sudo) — the tool never sets it on the user's behalf. `vd-engine doctor` reads this flag and prints the exact command when sleep is not disabled (see [First run (CLI)](#first-run-cli)).
 
 ## Troubleshooting
 
