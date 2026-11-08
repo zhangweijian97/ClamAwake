@@ -155,6 +155,15 @@ caffeinate -d &
 
 之后合盖：屏幕熄灭，机器继续运行，视觉采集不受影响。解除时结束引擎进程（Ctrl-C 或 `kill`），再跑 `caffeinate -u -t 3` 唤醒显示器。
 
+### 在 DeepSeek Harness 里用（插件形态）
+
+`dsh-plugin/` 把保活绑到 DeepSeek Harness（DSH）宿主的生命周期：DSH 起来＝配方在跑（虚拟屏 + `caffeinate -d`），DSH 停＝收掉自有子进程；已有 `kya=yes` 屏时复用、不重建；引擎意外退出自动重启（退避 1s 起、30s 封顶）。
+
+装载：插件管理器的 `install_bundle`，目标指向 `dsh-plugin/` 的绝对路径；开关就是插件本身，没有其它设置。装好后改代码，重新启用插件即可让宿主读到新模块。
+
+合盖→开盖时若系统把内屏分辨率重排打偏，引擎护档会在内屏重新亮起后的窗口期内恢复成合盖前的档位——应用版与插件版共用同一份引擎源码，修复对两者同时生效。
+
+
 ## For AI agents
 
 面向自动化调用的精确契约。两条约定贯穿始终：**stdout 只放机器可读结果**（屏 id / `mirrored` / `unmirrored` / 读数 / doctor 的 `check=` 行）；**诊断与可执行恢复动作走 stderr**。分支判断依据 = 退出码 + stdout，不要解析 stderr 文案（stderr 目前是中文诊断，人读的）。

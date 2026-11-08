@@ -155,6 +155,15 @@ caffeinate -d &
 
 Then close the lid: the screen goes dark, the machine keeps running, and visual capture is unaffected. To undo, stop the engine process (Ctrl-C or `kill`), then run `caffeinate -u -t 3` to wake the display.
 
+### Running inside DeepSeek Harness (plugin form)
+
+`dsh-plugin/` binds the keep-alive to the DeepSeek Harness (DSH) host lifecycle: host starts = recipe runs (virtual display + `caffeinate -d`); host stops = its own children are terminated. An existing `kya=yes` display is reused, never duplicated; an unexpectedly exited engine is restarted automatically (backoff from 1s, capped at 30s).
+
+Install: `install_bundle` in the plugin manager with the absolute path to `dsh-plugin/`. The plugin itself is the only switch — there are no other settings. After editing the code, re-enable the plugin to load the fresh module.
+
+If a lid close/reopen makes the system re-lay-out display settings and knocks the built-in display off its mode, the engine's mode guard restores the mode that was active before the lid closed, within a short window after the display comes back. The app and the plugin share the same engine source, so the fix applies to both.
+
+
 ## For AI agents
 
 The precise contract for automated invocation. Two conventions hold throughout: **stdout carries only machine-readable results** (display ids / `mirrored` / `unmirrored` / readings / doctor's `check=` lines); **diagnostics and executable recovery actions go to stderr**. Branch on exit code + stdout; never parse stderr text (stderr diagnostics are currently in Chinese — written for humans).
