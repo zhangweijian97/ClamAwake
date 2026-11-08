@@ -27,7 +27,9 @@
  *   全部落空 → 抛明确错误：列尝试过的路径 + swiftc 构建命令。
  *
  * 没有 npm 依赖：node:child_process 的 spawn / spawnSync，数组参数不经 shell。
- * apply 同步返回启动状态对象（宿主忽略返回值；test-lifecycle.mjs 消费）。
+ *
+ * 状态暴露：cordis 把 apply 的返回值当 effect 处理（普通对象直接报 TypeError: Invalid effect），
+ * 所以 apply 不返回 state；最近一次启动的 state 经 getState() 提供（test-lifecycle.mjs 消费）。
  */
 import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -294,14 +296,22 @@ function stopKeepalive(state) {
   }
 }
 
+// 最近一次 start 的 state。apply 的返回值会被 cordis 当 effect 消费（返回普通对象 →
+// TypeError: Invalid effect），所以状态不经 apply 返回，改用 getState() 暴露。
+let latestState = null
+
+export function getState() {
+  return latestState
+}
+
 export default {
   name: 'dsh-clamawake',
   apply(ctx) {
     let state = null
     ctx.effect(() => {
       state = startKeepalive()
+      latestState = state
       return () => stopKeepalive(state)
     }, 'clamawake: keepalive engine (vd-engine --hold + caffeinate -d)')
-    return state // 宿主忽略；test-lifecycle.mjs 消费（effect 的 setup 同步执行，返回时已就绪）
   },
 }

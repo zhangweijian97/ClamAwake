@@ -46,13 +46,13 @@ swiftc -O src/vd-engine.swift -o vd-engine
 - **推荐**：把 `vd-engine` 拷到 `<插件目录>/bin/vd-engine` 后再装（自包含，无环境依赖）；或
 - `launchctl setenv CLAMAWAKE_ENGINE <绝对路径>`（重启机器后失效，需重设）。
 
-## 装载步骤（说明，未实际装载）
+## 装载步骤（插件管理器路径已实测，见「已知边界」）
 
 1. 编译引擎并按上文放进解析链某一级（推荐 `bin/vd-engine` 自包含）。
 2. 把本目录（`dsh-plugin/`）作为插件包装进 DSH，两种等价路径：
-   - **界面/插件管理器**：`plugin_manager(action=install_bundle, target=<本目录绝对路径>)`（与 dsh-member 同法）；
-   - **文件级**（DSH 插件接入的硬约束：必须是 profile 下**实体目录** + 双登记）：把本目录拷到 `~/.dsh/profiles/<profile>/node_modules/dsh-clamawake/`，并在该 profile 的 `package.json` 里同时登记 `dependencies` 与 `dsh.profile.bundles`。不要用符号链接——宿主 import 会失败且只打一行「entry did not activate」。
-3. **重启 DSH**（插件只在应用启动时加载）。
+   - **界面/插件管理器**：`plugin_manager(action=install_bundle, target=<本目录绝对路径>)`（与 dsh-member 同法；实测装成的是 profile 下指向本目录的 link，改代码后重新启用即可生效，无需拷贝）；
+   - **文件级**（DSH 插件接入的硬约束：必须是 profile 下**实体目录** + 双登记）：把本目录拷到 `~/.dsh/profiles/<profile>/node_modules/dsh-clamawake/`，并在该 profile 的 `package.json` 里同时登记 `dependencies` 与 `dsh.profile.bundles`。手工符号链接不要用——宿主 import 会失败且只打一行「entry did not activate」；插件管理器的 link 依赖不同，已实测可用。
+3. **重启 DSH**（插件只在应用启动时加载；已装好后改代码，重新启用插件（`set_plugin` 关→开）即可让宿主读到新模块）。
 4. 验证：宿主控制台出现 `[clamawake]` 启动日志（复用或建屏 + 核验通过）；`vd-engine list` 里出现 `kya=yes` 屏（若此前没有的话）；退出 DSH 后该屏消失、本插件挂的 caffeinate 断言释放。
 5. 移除/更新插件：`remove_bundle`（或文件级删除 + 重启）；更新 `index.js` 后需重装并重启。
 
@@ -85,5 +85,6 @@ node dsh-plugin/test-lifecycle.mjs
 
 - **无 Config 导出**：配置只走环境变量（与 dsh-member/spacemgr 一致，无 UI 场景够用）。
 - **引擎意外退出不自拉起**：只打显著日志；自动重启策略（含退避）属后续切片。
-- **真实 DSH 宿主装载验收未做**：本目录交付的是插件本体 + 协议级自测；`install_bundle` 装载、宿主控制台日志、DSH 退出即收屏的端到端读数，需要在 DSH 宿主可操作的会话里完成。
+- **真实 DSH 宿主装载已验收（2026-11-08）**：`install_bundle` 装载并在宿主激活（`application: applied`）；复用模式下挂自有 `caffeinate -d`、不动外部 kya=yes 屏；`set_plugin` 关闭只收自有 caffeinate（用户 ClamAwake.app 保活与外部屏原样），重新开启重挂。协议级自测（`node test-lifecycle.mjs`）同一轮通过：建屏 → 核验 → 拆屏 → 屏消失，复用路径不重复建屏、终态与基线一致。
+- **宿主被强杀时的孤儿子进程（未验证）**：正常退出走 cordis dispose（SIGTERM 自有子进程）；若宿主进程被 `kill -9` 之类强杀，dispose 不执行，插件 spawn 的 vd-engine / caffeinate 可能成孤儿继续保活，需手动 `kill`（下次宿主启动时插件会按 kya 标记复用该屏）。
 - **GUI 宿主的环境变量缺口**：见「引擎二进制怎么来」——推荐 `bin/vd-engine` 自包含规避。

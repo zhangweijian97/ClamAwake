@@ -147,8 +147,7 @@ function makeCtx(label) {
 }
 
 async function importPlugin(tag) {
-  const mod = await import(pathToFileURL(INDEX_PATH).href + `?phase=${tag}`)
-  return mod.default
+  return await import(pathToFileURL(INDEX_PATH).href + `?phase=${tag}`)
 }
 
 async function disposeAll(ctx, timeoutMs = 8000) {
@@ -191,7 +190,8 @@ try {
   const pluginA = await importPlugin('a')
   ctxA = makeCtx('A')
   const t0 = Date.now()
-  ctxA.state = pluginA.apply(ctxA)
+  pluginA.default.apply(ctxA)
+  ctxA.state = pluginA.getState()
   assert(ctxA.state && ctxA.state.mode === 'created', `阶段 A 应走建屏路径，实得 mode=${ctxA.state && ctxA.state.mode}`)
   assert(ctxA.state.engine_child && ctxA.state.engine_pid > 0, '阶段 A 应已 spawn 引擎子进程并持句柄')
   console.log(`[test] 阶段 A start 完成（${Date.now() - t0}ms）：mode=created，引擎 pid=${ctxA.state.engine_pid}，caffeinate pid=${ctxA.state.caffeinate_pid}`)
@@ -220,7 +220,8 @@ try {
   delete process.env.CLAMAWAKE_REUSE
   const pluginB = await importPlugin('b')
   ctxB = makeCtx('B')
-  ctxB.state = pluginB.apply(ctxB)
+  pluginB.default.apply(ctxB)
+  ctxB.state = pluginB.getState()
   assert(ctxB.state && ctxB.state.mode === 'reused', `阶段 B 应走复用路径，实得 mode=${ctxB.state && ctxB.state.mode}`)
   assert(ctxB.state.engine_child === null, '阶段 B 复用模式下不应 spawn 引擎子进程（外部屏持有者不属于本插件）')
   const reusedIds = ctxB.state.screen_ids
