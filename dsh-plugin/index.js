@@ -4,9 +4,13 @@
  * 绑定语义：DSH 起来 = 保活配方在跑；DSH 停 = 配方停。配方两件套
  * （见仓 README「快速上手」）：
  *
- *   1. 虚拟屏：spawn `vd-engine create 1800 1169 --hidpi --hold` 子进程持有屏——
- *      屏活在该子进程生命周期内（CGVirtualDisplay 无跨进程销毁 API，见 src/vd-engine.swift
- *      remove 子命令的结论注释）；给子进程 SIGTERM → 引擎的 signal handler exit(0) → 屏随之消失。
+ *   1. 虚拟屏：spawn `vd-engine create 1800 1169 --hidpi --hold --mirror-main`
+ *      子进程持有屏——屏活在该子进程生命周期内（CGVirtualDisplay 无跨进程销毁 API，
+ *      见 src/vd-engine.swift remove 子命令的结论注释）；给子进程 SIGTERM → 引擎的
+ *      signal handler exit(0) → 屏随之消失。`--mirror-main` 与应用版
+ *      （shell/Sources/ClamAwake/EngineController.swift）同参：每次宿主启动＝新进程＝
+ *      新建屏，镜像基线不会自动回来（vd-engine 用法说明的 launchd/自启形态同判），
+ *      必须启动即自挂主屏镜像；否则建出来的是扩展屏，合盖后不是镜像接管。
  *   2. caffeinate -d 显示断言：独立子进程，停止时一并 SIGTERM。
  *
  * 重复启动防护（判据与 `vd-engine doctor` 的 keepalive_running 同源）：
@@ -120,7 +124,7 @@ function listScreens(engine) {
  * （SIGTERM 让引擎退出，屏未建或随进程消失）。
  */
 function spawnEngineCreate(engine) {
-  const child = spawn(engine, ['create', String(SCREEN_W), String(SCREEN_H), '--hidpi', '--hold'], {
+  const child = spawn(engine, ['create', String(SCREEN_W), String(SCREEN_H), '--hidpi', '--hold', '--mirror-main'], {
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   const screenIdPromise = new Promise((resolve, reject) => {
@@ -225,7 +229,7 @@ function startKeepalive() {
   state.engine_pid = child.pid
   spawnCaffeinateFor(state)
   console.log(`${LOG} 已 spawn 引擎建屏子进程 pid=${child.pid}`
-    + `（vd-engine create ${SCREEN_W} ${SCREEN_H} --hidpi --hold，engine=${engine}）`)
+    + `（vd-engine create ${SCREEN_W} ${SCREEN_H} --hidpi --hold --mirror-main，engine=${engine}）`)
 
   // 异步尾段：确认屏 id + 交叉核验在线（执行后验证——不信子进程一面之词，自己 list 一遍）
   screenIdPromise.then(({ screenId }) => {

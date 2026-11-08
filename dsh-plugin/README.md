@@ -4,7 +4,7 @@
 
 保活配方两件套（与仓 README「快速上手」一致）：
 
-1. **虚拟屏**：spawn `vd-engine create 1800 1169 --hidpi --hold` 子进程持有屏——虚拟屏活在持有进程的生命周期内（CGVirtualDisplay 没有跨进程销毁 API，见 `src/vd-engine.swift` 的结论注释）；对子进程 SIGTERM → 引擎的 signal handler `exit(0)` → 屏随之消失。
+1. **虚拟屏**：spawn `vd-engine create 1800 1169 --hidpi --hold --mirror-main` 子进程持有屏——虚拟屏活在持有进程的生命周期内（CGVirtualDisplay 没有跨进程销毁 API，见 `src/vd-engine.swift` 的结论注释）；对子进程 SIGTERM → 引擎的 signal handler `exit(0)` → 屏随之消失。`--mirror-main` 与应用版同参：每次宿主启动＝新进程＝新建屏，镜像基线不会自动回来，必须启动即自挂主屏镜像；不带它是扩展屏，合盖后不是镜像接管。
 2. **`caffeinate -d` 显示断言**：独立子进程，停止时一并 SIGTERM。
 
 ## 生命周期语义
