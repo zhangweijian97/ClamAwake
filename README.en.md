@@ -26,6 +26,8 @@ Click the menu bar icon → "Start Keep-Alive", done. From then on, closing the 
 
 > The current DMG is ad-hoc signed, which is why step 3's right-click is needed the first time; proper signing & notarization will remove that step.
 
+**That's everything you need.** The sections below are written for command-line users and readers curious about the internals — if the menu bar app covers you, feel free to stop here.
+
 ## Command-line users (geeks / AI engineers)
 
 Beyond the menu bar app, the repo ships two CLI tools and the full build chain:
