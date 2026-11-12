@@ -8,6 +8,13 @@
 //   · 校验双查扩镜像：镜像基线（部署序列 mirror-probe 建立的「虚拟屏镜像主屏」）确立后，
 //     检测到 mirror_of ≠ 主屏自动重挂（护镜像并入，goal-9dcbec 遗留①）。
 //
+// 2026-11-12 窗口外砸档恢复（goal-591461 机制）+ 护档日志落盘：
+//   · 引擎自身显示动作（建屏 createVirtualDisplay / 重挂镜像 remirrorToMain）前后加保护：
+//     动作前记录内屏快照，动作后开 3s 观察窗口；窗口内读到「非默认档 → 系统默认档（本机 1512x982）」
+//     跳变即恢复快照档并读回验证；窗口外/非该跳变只记日志（不锁死用户主动改分辨率）。
+//   · 护档日志除 stderr 外追加写 ~/Library/Logs/ClamAwake/vd-engine.log（>2MB 轮转为 .1），
+//     解决 app 形态下拉起的引擎 stderr 走内存环、护档动作事后不可查的问题。
+//
 // 编译: swiftc -O src/vd-engine.swift -o vd-engine
 //
 // 风格与 mirror-probe.swift 一致：中文注释、stdout 只放机器可读结果、诊断走 stderr、
@@ -323,6 +330,77 @@ func waitForNewDisplay(baseline: [CGDirectDisplayID], expected: CGDirectDisplayI
     return nil
 }
 
+// MARK: - 护档日志落盘（可观测性，2026-11-12）
+
+/// 护档日志落盘器（方案 a：stderr 保持不变，另追加文件）。
+/// 为什么落盘：app 形态下拉起的引擎 stderr 走内存环、不落盘，护档到底触发过没有事后不可查
+/// （上一轮排查全靠二进制取证）。文件是唯一进程外可查的持久通道，`tail` 即可取证。
+/// 轮转：当前文件超过 2MB 时改名为 vd-engine.log.1（覆盖旧 .1）后重开，避免无限增长。
+/// 并发：多实例可能同时写（生产引擎 + 测试引擎），append 以行粒度写入；行内带 pid 便于区分。
+final class GuardLogFile {
+    static let shared = GuardLogFile()
+
+    let path: String
+    private let directoryPath: String
+    private let maxBytes = 2 * 1024 * 1024
+    private var handle: FileHandle?
+    private var currentBytes = 0
+    private let lock = NSLock()
+
+    private init() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        directoryPath = home.appendingPathComponent("Library/Logs/ClamAwake", isDirectory: true).path
+        path = (directoryPath as NSString).appendingPathComponent("vd-engine.log")
+        lock.lock()
+        openLocked()
+        lock.unlock()
+    }
+
+    /// 追加一行（自动补换行）。文件不可写时静默降级——日志不能影响护档主语义。
+    func append(_ line: String) {
+        guard let data = (line + "\n").data(using: .utf8) else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        if handle == nil { openLocked() }
+        if currentBytes + data.count > maxBytes { rotateLocked() }
+        handle?.write(data)
+        currentBytes += data.count
+    }
+
+    private func openLocked() {
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: directoryPath) {
+            try? fm.createDirectory(atPath: directoryPath, withIntermediateDirectories: true)
+        }
+        // O_APPEND：多实例（生产引擎 + 测试引擎）同时写时按行追加，不互相覆盖文件偏移。
+        let fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0o644)
+        if fd >= 0 {
+            handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+            currentBytes = Int((try? handle?.seekToEnd()) ?? 0)
+        } else {
+            handle = nil
+            currentBytes = 0
+        }
+    }
+
+    private func rotateLocked() {
+        handle?.closeFile()
+        handle = nil
+        let fm = FileManager.default
+        let rotated = path + ".1"
+        try? fm.removeItem(atPath: rotated)
+        try? fm.moveItem(atPath: path, toPath: rotated)
+        openLocked()
+    }
+}
+
+/// 写一行带完整日期与 pid 的护档日志到磁盘（file-only；stderr 由 guardLog/errln 负责）。
+func guardFileLog(_ message: String) {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+    GuardLogFile.shared.append("[mode-guard \(formatter.string(from: Date())) pid=\(getpid())] \(message)")
+}
+
 // MARK: - 护档（--hold 模式的分辨率守卫，goal-9dcbec）
 
 // 背景（2026-11-08 凌晨实测，WindowServer 日志实锤）：
@@ -344,6 +422,42 @@ func waitForNewDisplay(baseline: [CGDirectDisplayID], expected: CGDirectDisplayI
 //     见文件头与 hold 分支注释）——hold 常驻改 NSApplication(.accessory)+app.run()；
 //     另以 beginActivity(.userInitiated) 豁免 App Nap（nohup 后台长跑的交付抑制面）。
 
+/// 引擎自身显示动作前的内屏快照（窗口外砸档恢复的判据起点）。
+struct InnerActionSnapshot {
+    let action: String
+    let innerID: CGDirectDisplayID
+    let mode: ModeReading
+    let capturedAt: Date
+}
+
+/// 档位四元是否一致（ModeReading 没做 Equatable，集中一个比较口径）。
+private func sameMode(_ a: ModeReading, _ b: ModeReading) -> Bool {
+    a.pointsWidth == b.pointsWidth && a.pointsHeight == b.pointsHeight
+        && a.pixelsWidth == b.pixelsWidth && a.pixelsHeight == b.pixelsHeight
+}
+
+/// 档位的人类可读形态（日志统一口径）。
+private func modeDescription(_ mode: ModeReading) -> String {
+    "\(mode.pointsWidth)x\(mode.pointsHeight) 像素\(mode.pixelsWidth)x\(mode.pixelsHeight)"
+}
+
+/// 系统默认档落点（砸档判据）。本机实测（2026-11-12，macOS 27.0，MacBook 内屏）：
+/// WindowServer 重排后「Applying default configuration」把内屏落到 1512x982（逻辑分辨率，HiDPI）。
+/// 只比逻辑分辨率：默认配置的像素随 backing scale 变化，逻辑档位才是稳定落点。
+/// 换机型时把该机默认档加进这个列表。
+private let systemDefaultInnerPoints: [(width: Int, height: Int)] = [(1512, 982)]
+
+private func isSystemDefaultInnerMode(_ mode: ModeReading) -> Bool {
+    systemDefaultInnerPoints.contains { $0.width == mode.pointsWidth && $0.height == mode.pointsHeight }
+}
+
+/// 动作前记录内屏当前档位（在显示动作之前调用；只读，不改变任何状态）。
+func captureInnerSnapshot(action: String) -> InnerActionSnapshot? {
+    let innerID = CGMainDisplayID()
+    guard let mode = currentMode(innerID) else { return nil }
+    return InnerActionSnapshot(action: action, innerID: innerID, mode: mode, capturedAt: Date())
+}
+
 /// 护档上下文：C 回调不能捕获 Swift 上下文，经 userInfo 指针传递（Unmanaged 来回）。
 final class ModeGuardContext {
     let displayID: CGDirectDisplayID
@@ -353,6 +467,8 @@ final class ModeGuardContext {
     let targetPixelsH: Int
     // 串行队列承载去抖与校验动作；重配回调来自 WindowServer 任意线程，不能在回调里直接干活
     let queue = DispatchQueue(label: "vd-engine.mode-guard")
+    // 队列身份：remirrorToMain 在护档队列上被调用时要同步开观察窗口（不能 async 排到读回之后）
+    private let queueKey = DispatchSpecificKey<UInt8>()
     var pending: DispatchWorkItem?
     // 镜像基线是否已确立（2026-11-08 回炉）：任一次校验读到 mirror_of==主屏 即置位，
     // 进程常驻期不复位——确立后「mirror_of ≠ 主屏」才判为镜像解除并自动重挂。
@@ -366,18 +482,109 @@ final class ModeGuardContext {
     var innerWasOnline = true
     var innerRestoreDeadline: Date?
 
+    // —— 窗口外砸档恢复（2026-11-12，goal-591461 机制）——
+    // 引擎自身显示动作（建屏/重挂镜像）会触发 WindowServer 重排，可能在内屏始终在线时
+    // 把内屏砸回系统默认档。5s 离线→上线窗口覆盖不到这类砸档，这里单独开动作后观察窗口：
+    // 动作前快照非默认档、窗口内读到默认档才恢复；其余变化只记日志，不锁死用户主动改档。
+    var actionSnapshot: InnerActionSnapshot?
+    var actionWindowDeadline: Date?
+    var actionWindowHandled = false      // 已做过恢复尝试（成功或失败），窗口内不再反复重设
+    var actionWindowRestored = false     // 恢复成功（用于窗口结束日志）
+    var actionWindowNoteLogged = false   // 让位/异常类日志只记一次，避免每个 tick 刷屏
+    var actionWindowSequence = 0         // 新动作作废旧窗口的定时抽查
+
     init(displayID: CGDirectDisplayID, pointsW: Int, pointsH: Int, pixelsW: Int, pixelsH: Int) {
         self.displayID = displayID
         self.targetPointsW = pointsW
         self.targetPointsH = pointsH
         self.targetPixelsW = pixelsW
         self.targetPixelsH = pixelsH
+        queue.setSpecific(key: queueKey, value: 1)
+    }
+
+    var isOnGuardQueue: Bool {
+        DispatchQueue.getSpecific(key: queueKey) != nil
     }
 
     func guardLog(_ message: String) {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss.SSS"
-        errln("[mode-guard \(formatter.string(from: Date()))] \(message)")
+        let now = Date()
+        let timeFormatter = DateFormatter()
+        timeFormatter.dateFormat = "HH:mm:ss.SSS"
+        errln("[mode-guard \(timeFormatter.string(from: now))] \(message)")
+        // 落盘（方案 a）：stderr 不变，另写文件供事后 tail 取证；行内带 pid 区分多实例。
+        let fullFormatter = DateFormatter()
+        fullFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+        GuardLogFile.shared.append("[mode-guard \(fullFormatter.string(from: now)) pid=\(getpid())] \(message)")
+    }
+
+    /// 动作后开 3s 观察窗口。在护档队列上调用时同步开窗（remirrorToMain 的读回会阻塞队列，
+    /// async 开窗会让窗口起点晚于动作最多 1s）；其他线程调用时排到护档队列，与 verify 串行。
+    func armActionWindow(snapshot: InnerActionSnapshot?) {
+        if isOnGuardQueue {
+            armActionWindowLocked(snapshot: snapshot)
+        } else {
+            queue.async { self.armActionWindowLocked(snapshot: snapshot) }
+        }
+    }
+
+    private func armActionWindowLocked(snapshot: InnerActionSnapshot?) {
+        guard let snapshot = snapshot else {
+            guardLog("动作观察窗口：内屏快照缺失（动作前读不到内屏档位），不开窗口")
+            return
+        }
+        let existing = actionSnapshot
+        var keepEarlier = false
+        if let existing = existing, !actionWindowHandled,
+           isSystemDefaultInnerMode(snapshot.mode), !isSystemDefaultInnerMode(existing.mode) {
+            // 新动作前快照已是默认档：上一个动作可能已经砸档（如建屏后紧接着 --mirror-main 重挂）。
+            // 保留更早的非默认快照作为恢复目标，避免把真正的砸档目标覆盖成默认档。
+            keepEarlier = true
+        } else {
+            actionSnapshot = snapshot
+        }
+        actionWindowDeadline = Date().addingTimeInterval(3)
+        actionWindowHandled = false
+        actionWindowRestored = false
+        actionWindowNoteLogged = false
+        actionWindowSequence += 1
+        let sequence = actionWindowSequence
+        if keepEarlier, let existing = existing {
+            guardLog("动作 \(snapshot.action) 前快照已是默认档 \(modeDescription(snapshot.mode))；沿用上一个动作 \(existing.action) 的非默认快照 \(modeDescription(existing.mode)) 作为恢复目标，观察窗口顺延 3s")
+        } else {
+            let captureFormatter = DateFormatter()
+            captureFormatter.dateFormat = "HH:mm:ss.SSS"
+            guardLog("动作 \(snapshot.action) 前快照（拍于 \(captureFormatter.string(from: snapshot.capturedAt))）：内屏 id=\(snapshot.innerID) \(modeDescription(snapshot.mode))；开 3s 观察窗口")
+        }
+        // 立即查一次（动作可能已经砸档），随后窗口内多点抽查（重配事件之外兜底）。
+        checkActionWindowInnerRestore(ctx: self)
+        for delay in [0.4, 1.0, 1.6, 2.2, 2.8] {
+            queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self = self, sequence == self.actionWindowSequence else { return }
+                checkActionWindowInnerRestore(ctx: self)
+            }
+        }
+        queue.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+            guard let self = self, sequence == self.actionWindowSequence else { return }
+            self.closeActionWindowLocked()
+        }
+    }
+
+    private func closeActionWindowLocked() {
+        guard let snapshot = actionSnapshot else { return }
+        let current = onlineDisplayIDs().contains(snapshot.innerID) ? currentMode(snapshot.innerID) : nil
+        let nowText = current.map(modeDescription) ?? "读不到（内屏离线或模式为 NULL）"
+        if actionWindowRestored {
+            guardLog("动作 \(snapshot.action) 观察窗口结束（3s）：已恢复快照档 \(modeDescription(snapshot.mode))，当前内屏 \(nowText)")
+        } else if actionWindowHandled {
+            guardLog("动作 \(snapshot.action) 观察窗口结束（3s）：恢复未成功/已放弃，当前内屏 \(nowText)")
+        } else {
+            guardLog("动作 \(snapshot.action) 观察窗口结束（3s）：未触发恢复，当前内屏 \(nowText)")
+        }
+        actionWindowDeadline = nil
+        actionSnapshot = nil
+        actionWindowHandled = false
+        actionWindowRestored = false
+        actionWindowNoteLogged = false
     }
 }
 
@@ -416,6 +623,9 @@ private func findTargetMode(ctx: ModeGuardContext) -> CGDisplayMode? {
 /// → CGComplete(.forSession)，方向 slave=本引擎虚拟屏、master=主屏（内屏）。
 /// 返回重挂是否读回验证通过（最多 1s，与 mirror-probe 读回同法）。
 private func remirrorToMain(ctx: ModeGuardContext, mainID: CGDirectDisplayID) -> Bool {
+    // 窗口外砸档恢复（2026-11-12）：重挂镜像本身是引擎的显示动作，动作前记录内屏快照；
+    // CGComplete 成功后开 3s 观察窗口（即使镜像读回失败，重排也可能已经发生）。
+    let actionSnapshot = captureInnerSnapshot(action: "remirrorToMain(master=\(mainID))")
     var config: CGDisplayConfigRef?
     var result = CGBeginDisplayConfiguration(&config)
     guard result == .success, let config = config else {
@@ -433,6 +643,7 @@ private func remirrorToMain(ctx: ModeGuardContext, mainID: CGDirectDisplayID) ->
         ctx.guardLog("镜像重挂：CGCompleteDisplayConfiguration(.forSession) 失败: CGError=\(result.rawValue)")
         return false
     }
+    ctx.armActionWindow(snapshot: actionSnapshot)
     for _ in 0..<5 {
         if CGDisplayMirrorsDisplay(ctx.displayID) == mainID { return true }
         usleep(200_000)
@@ -498,6 +709,79 @@ private func restoreInnerIfJustReturned(ctx: ModeGuardContext) {
     }
 }
 
+/// 窗口外砸档恢复（2026-11-12，goal-591461 机制）：
+/// 引擎自身显示动作（建屏/重挂镜像）后 3s 窗口内，若内屏从「非默认档」跳到「系统默认档」，
+/// 判为被自己的动作砸掉，恢复动作前快照档并读回验证（沿用 restoreInnerIfJustReturned 的读回写法）。
+/// 窗口外、或变化不落在该跳变上 → 只记日志不动作（避免和用户主动改分辨率打架）。
+/// 离线→上线 5s 恢复窗口优先：两套恢复同时命中时本窗口让位，避免互相抢拍。
+private func checkActionWindowInnerRestore(ctx: ModeGuardContext) {
+    guard let snapshot = ctx.actionSnapshot, let deadline = ctx.actionWindowDeadline else { return }
+    let now = Date()
+    guard now <= deadline else { return }
+    guard !ctx.actionWindowHandled else { return }
+    if let offlineDeadline = ctx.innerRestoreDeadline, now <= offlineDeadline {
+        if !ctx.actionWindowNoteLogged {
+            ctx.actionWindowNoteLogged = true
+            ctx.guardLog("动作 \(snapshot.action) 观察窗口：内屏正处于离线→上线 5s 恢复窗口，本窗口让位（快照 \(modeDescription(snapshot.mode))）")
+        }
+        return
+    }
+    guard onlineDisplayIDs().contains(snapshot.innerID) else {
+        if !ctx.actionWindowNoteLogged {
+            ctx.actionWindowNoteLogged = true
+            ctx.guardLog("动作 \(snapshot.action) 观察窗口：内屏 \(snapshot.innerID) 不在线，砸档判据不适用，本轮不动作")
+        }
+        return
+    }
+    guard let current = currentMode(snapshot.innerID) else {
+        if !ctx.actionWindowNoteLogged {
+            ctx.actionWindowNoteLogged = true
+            ctx.guardLog("动作 \(snapshot.action) 观察窗口：内屏档位读数缺失（可能处于镜像组），本轮不动作")
+        }
+        return
+    }
+    if sameMode(current, snapshot.mode) { return }
+    let observed = modeDescription(current)
+    guard isSystemDefaultInnerMode(current), !isSystemDefaultInnerMode(snapshot.mode) else {
+        if !ctx.actionWindowNoteLogged {
+            ctx.actionWindowNoteLogged = true
+            ctx.guardLog("动作 \(snapshot.action) 观察窗口：内屏档位变化 \(modeDescription(snapshot.mode)) → \(observed)，不落在「非默认档→默认档」跳变，不动作（视为用户主动改档）")
+        }
+        return
+    }
+    // 命中判据：恢复快照档并读回验证。
+    guard let targetMode = findMode(on: snapshot.innerID,
+                                    pointsW: snapshot.mode.pointsWidth, pointsH: snapshot.mode.pointsHeight,
+                                    pixelsW: snapshot.mode.pixelsWidth, pixelsH: snapshot.mode.pixelsHeight) else {
+        ctx.actionWindowHandled = true
+        ctx.guardLog("动作 \(snapshot.action) 砸档命中（\(modeDescription(snapshot.mode)) → \(observed)），但档位列表里找不到快照档，放弃恢复")
+        return
+    }
+    let setError = CGDisplaySetDisplayMode(snapshot.innerID, targetMode, nil)
+    guard setError == .success else {
+        ctx.actionWindowHandled = true
+        ctx.guardLog("动作 \(snapshot.action) 砸档命中（\(modeDescription(snapshot.mode)) → \(observed)），CGDisplaySetDisplayMode 失败: CGError=\(setError.rawValue)")
+        return
+    }
+    var verified = false
+    for _ in 0..<5 {
+        if let nowMode = currentMode(snapshot.innerID), sameMode(nowMode, snapshot.mode) {
+            verified = true
+            break
+        }
+        usleep(200_000)
+    }
+    ctx.actionWindowHandled = true
+    if verified {
+        ctx.innerLastSeenMode = snapshot.mode
+        ctx.actionWindowRestored = true
+        ctx.guardLog("动作 \(snapshot.action) 砸档命中（\(modeDescription(snapshot.mode)) → \(observed)），已恢复快照档 \(modeDescription(snapshot.mode))，读回验证通过")
+    } else {
+        let after = currentMode(snapshot.innerID).map(modeDescription) ?? "?"
+        ctx.guardLog("动作 \(snapshot.action) 砸档命中（\(modeDescription(snapshot.mode)) → \(observed)），已发恢复但读回仍是 \(after)，需人工核查")
+    }
+}
+
 /// 校验本屏镜像与模式并按需恢复（在护档串行队列上执行）。成功/失败都打 stderr 日志（重定向到 vd-prod.err 可查）。
 ///
 /// 双查（2026-11-08 回炉，护镜像并入；查序=镜像先于档位）：
@@ -521,6 +805,10 @@ private func verifyAndRestore(ctx: ModeGuardContext) {
     //   3. 虚拟屏档位：本引擎屏偏离目标档则重设（findTargetMode + CGDisplaySetDisplayMode）
     // 再接新的显示对象（外接屏、缩放等）时在此追加同一形态的核对，不再另起恢复器。
     restoreInnerIfJustReturned(ctx: ctx)
+    // 窗口外砸档恢复（2026-11-12）：引擎自身显示动作后的 3s 观察窗口内，
+    // 内屏从非默认档跳到系统默认档 → 判为被自己的动作砸掉，恢复动作前快照。
+    // 放在离线→上线恢复之后：离线场景优先，本窗口在 5s 窗口内让位（函数内判断）。
+    checkActionWindowInnerRestore(ctx: ctx)
 
     // —— 镜像查 ——
     let mainID = CGMainDisplayID()
@@ -611,7 +899,8 @@ private func modeGuardReconfigurationCallback(_ display: CGDirectDisplayID,
 /// 注册护档：进入 --hold 前调用。进程常驻期间一直生效（退出随进程清理，无需显式注销）。
 /// mirrorMain=true（启动参数 --mirror-main，f8e4a9）：注册成功后启动即自动挂主屏镜像并确立基线——
 /// launchd/登录自启拉起的新进程=新建屏，镜像基线不会自动回来，必须启动即自挂。
-func startModeGuard(handle: VirtualDisplayHandle, logicalWidth: Int, logicalHeight: Int, hidpi: Bool, mirrorMain: Bool = false) {
+/// actionSnapshot：建屏动作前的内屏快照（窗口外砸档恢复）；护档注册成功后开 3s 观察窗口。
+func startModeGuard(handle: VirtualDisplayHandle, logicalWidth: Int, logicalHeight: Int, hidpi: Bool, mirrorMain: Bool = false, actionSnapshot: InnerActionSnapshot? = nil) {
     let ctx = ModeGuardContext(
         displayID: handle.displayID,
         pointsW: logicalWidth,
@@ -654,6 +943,11 @@ func startModeGuard(handle: VirtualDisplayHandle, logicalWidth: Int, logicalHeig
                 ctx.guardLog("--mirror-main：镜像基线建立失败（读回 mirror_of 非主屏）——需人工 mirror-probe 建基线，基线确立前护档不会自动重挂")
             }
         }
+        // 建屏动作的 3s 观察窗口（2026-11-12）：建屏发生在护档注册之前，快照已由调用方在
+        // createVirtualDisplay 之前拍好；这里注册成功后开窗（立即查一次能覆盖建屏瞬间的砸档）。
+        // 放在 --mirror-main 之后：若启动重挂又触发了重排，建屏快照仍是更早的非默认档，窗口以它为准。
+        guardFileLog("护档启动：pid=\(getpid()) version=\(engineVersion) 目标档 \(logicalWidth)x\(logicalHeight)\(hidpi ? " HiDPI" : "")，日志落盘 \(GuardLogFile.shared.path)")
+        ctx.armActionWindow(snapshot: actionSnapshot)
     } else {
         // passRetained 的引用没有消费方了，手动平衡避免泄漏
         unmanaged.release()
@@ -883,6 +1177,9 @@ case "create":
         exit(2)
     }
 
+    // 窗口外砸档恢复（2026-11-12）：建屏是引擎自己的显示动作，动作前记录内屏档位快照；
+    // 建屏成功后由 startModeGuard 开 3s 观察窗口（建屏瞬间砸档由窗口内立即检查覆盖）。
+    let createActionSnapshot = captureInnerSnapshot(action: "createVirtualDisplay")
     let baseline = onlineDisplayIDs()
     let handle: VirtualDisplayHandle
     do {
@@ -925,7 +1222,7 @@ case "create":
             // 护档注册（goal-9dcbec）：合盖/开盖的拓扑重排会把本屏模式改写，
             // 常驻期间监听重配并校验/重设，见「护档」节。须在 NSApplication 初始化之后注册
             // （通知投递依赖 app 形状的 CGS 连接）。
-            startModeGuard(handle: handle, logicalWidth: logicalWidth, logicalHeight: logicalHeight, hidpi: hidpi, mirrorMain: mirrorMain)
+            startModeGuard(handle: handle, logicalWidth: logicalWidth, logicalHeight: logicalHeight, hidpi: hidpi, mirrorMain: mirrorMain, actionSnapshot: createActionSnapshot)
             errln("常驻持有中（Ctrl-C / SIGTERM 结束，屏随之销毁）")
             signal(SIGINT) { _ in exit(0) }
             signal(SIGTERM) { _ in exit(0) }
@@ -948,6 +1245,12 @@ case "remove":
     guard online.contains(target) else {
         errln("显示器 \(target) 不在线（在线列表：\(online.map(String.init).joined(separator: ", "))）")
         exit(1)
+    }
+    // 窗口外砸档恢复（2026-11-12）：remove 在本引擎里是跨进程失败路径（见下方说明），
+    // 不产生任何显示动作/重排，因此没有可观察的 3s 窗口；动作前快照仍落盘，
+    // 保证「谁触发、快照档」可事后查证（真正的销毁动作=持有进程退出，同样没有观察窗口）。
+    if let snapshot = captureInnerSnapshot(action: "remove") {
+        guardFileLog("动作 remove 前快照：内屏 id=\(snapshot.innerID) \(modeDescription(snapshot.mode))；跨进程无销毁能力，未产生显示动作，观察窗口不适用")
     }
     // 跨进程销毁的结论（2026-11-07，参考源码 + 运行时内省 + 实验验证三方吻合）：
     //   · CGVirtualDisplay 的生命周期绑在创建它的进程上——实例释放（ARC 归零）或进程退出，WindowServer 即收屏；
