@@ -13,7 +13,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DIST="$ROOT/dist"
 APP="$DIST/ClamAwake.app"
-APP_VERSION="0.3.1"
+APP_VERSION="0.3.2"
 
 echo "==> [1/4] 编译菜单栏壳（SwiftPM release）"
 swift build --package-path "$ROOT/shell" -c release
@@ -50,7 +50,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 	<key>CFBundleShortVersionString</key>
 	<string>${APP_VERSION}</string>
 	<key>CFBundleVersion</key>
-	<string>2</string>
+	<string>3</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>

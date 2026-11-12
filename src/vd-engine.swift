@@ -53,7 +53,7 @@ import Darwin
 
 /// 引擎版本：与 ClamAwake 应用版本对齐（build-app.sh 的 APP_VERSION）。
 /// DSH 插件装载时读 `vd-engine version` 与包内声明比对，用于发现「应用与插件的引擎不同步」。
-let engineVersion = "0.3.1"
+let engineVersion = "0.3.2"
 
 // MARK: - 用法与退出码
 
