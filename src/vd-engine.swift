@@ -1,19 +1,19 @@
-// vd-engine — 虚拟屏引擎（ClamAwake v0.4，--hold 常驻含护档+护镜像；v0.3 新增 doctor 环境自检子命令）
+// vd-engine — 虚拟屏引擎（ClamAwake v0.4，--hold 常驻含分辨率自动恢复+镜像自动重挂；v0.3 新增 doctor 环境自检子命令）
 //
-// 2026-11-08 回炉 r2（goal-9dcbec：护档重配监听生产实锤未生效，部署两小时零回调）：
+// 2026-11-08 回炉 r2（goal-9dcbec：分辨率自动恢复的重配监听在生产上实测确认没生效，部署两小时零回调）：
 //   · 进程形状修复（实证根因，对照实验双确认）：CGS 重配通知只投递给 app 形状进程——
 //     纯 CLI（pause/dispatchMain/RunLoop 任一泵）注册成功却零事件，NSApplication 形状即时收到。
 //     hold 常驻改为 NSApplication(.accessory) + app.run()（原 `while true { pause() }`）；
 //   · App Nap 豁免：beginActivity(.userInitiated)，activity 对象进程常驻期全程持有；
 //   · 校验双查扩镜像：镜像基线（部署序列 mirror-probe 建立的「虚拟屏镜像主屏」）确立后，
-//     检测到 mirror_of ≠ 主屏自动重挂（护镜像并入，goal-9dcbec 遗留①）。
+//     检测到 mirror_of ≠ 主屏自动重挂（镜像自动重挂并入，goal-9dcbec 遗留①）。
 //
-// 2026-11-12 窗口外砸档恢复（goal-591461 机制）+ 护档日志落盘：
+// 2026-11-12 窗口外分辨率被重置后的恢复（goal-591461 机制）+ 恢复日志落盘：
 //   · 引擎自身显示动作（建屏 createVirtualDisplay / 重挂镜像 remirrorToMain）前后加保护：
-//     动作前记录内屏快照，动作后开 3s 观察窗口；窗口内读到「非默认档 → 系统默认档（本机 1512x982）」
-//     跳变即恢复快照档并读回验证；窗口外/非该跳变只记日志（不锁死用户主动改分辨率）。
-//   · 护档日志除 stderr 外追加写 ~/Library/Logs/ClamAwake/vd-engine.log（>2MB 轮转为 .1），
-//     解决 app 形态下拉起的引擎 stderr 走内存环、护档动作事后不可查的问题。
+//     动作前记录内屏快照，动作后开 3s 观察窗口；窗口内读到「非默认分辨率 → 系统默认分辨率（本机 1512x982）」
+//     跳变即恢复到快照分辨率并读回验证；窗口外/非该跳变只记日志（不锁死用户主动改分辨率）。
+//   · 恢复日志除 stderr 外追加写 ~/Library/Logs/ClamAwake/vd-engine.log（>2MB 轮转为 .1），
+//     解决 app 形态下拉起的引擎 stderr 走内存环、恢复动作事后不可查的问题。
 //
 // 编译: swiftc -O src/vd-engine.swift -o vd-engine
 //
@@ -26,11 +26,11 @@
 //       - descriptor 填法：name / queue / sizeInMillimeters / maxPixelsWide·High / 色度学原点 / vendor·product·serial
 //       - settings.hiDPI = 1，modes 里放像素尺寸（2x）
 //       - 关键洞察：WindowServer 在虚拟屏上只跑「模式列表第一个」= 首选模式，不认程序化模式切换
-//         → 想要哪档分辨率，就把它放列表第一位
+//         → 想要哪个分辨率，就把它放列表第一位
 //         （2026-11-08 实测修正适用边界：「不认程序化切换」指拓扑重排时 WindowServer 按自己的
-//           默认逻辑选档、无视列表首位；而 CGDisplaySetDisplayMode 在**创建者进程内**对本引擎
-//           建的屏有效（护档实测：偏档重设读回通过）。外部进程对本屏 set 无效——虚拟屏的模式
-//           配置权属创建者进程（CGError 1001 / displayplacer 静默无效），护档恰住在创建者进程里。）
+//           默认逻辑选分辨率、无视列表首位；而 CGDisplaySetDisplayMode 在**创建者进程内**对本引擎
+//           建的屏有效（分辨率自动恢复实测：偏离目标后重设，读回通过）。外部进程对本屏 set 无效——虚拟屏的模式
+//           配置权属创建者进程（CGError 1001 / displayplacer 静默无效），分辨率自动恢复恰好就住在创建者进程里。）
 //       - 生命周期：虚拟屏活在创建进程的生命周期内（进程退出即消失），没有销毁 API
 //   · xtongs/mirrorscreen（Sources/MirrorScreen/VirtualDisplayManager.swift + Sources/CGVirtualDisplayBridge/*）
 //       - descriptor / settings / mode 三段式构造；displayID 从对象属性读（display.displayID != 0 才算建成功）
@@ -68,13 +68,13 @@ let usage = """
   vd-engine version                              打印引擎版本与架构（只读，一行机器可读：version=<x.y.z>）
 
 选项:
-  --hidpi  逻辑 WxH、像素 2Wx2H（例: 1800 1169 --hidpi → 像素 3600x2338，HiDPI 档进模式列表）
+  --hidpi  逻辑 WxH、像素 2Wx2H（例: 1800 1169 --hidpi → 像素 3600x2338，HiDPI 分辨率进模式列表）
   --hold   建完不退出，前台常驻持有该屏（Ctrl-C / SIGTERM 结束，屏随之销毁）；
-           常驻期间开启护档：显示拓扑重排（合盖/开盖/接拔屏）后自动校验本屏模式，
-           偏离目标档则重设（goal-9dcbec：合盖触发 WindowServer 默认配置导致塌档）；
+           常驻期间开启分辨率自动恢复：显示拓扑重排（合盖/开盖/接拔屏）后自动校验本屏模式，
+           偏离目标分辨率则重设（goal-9dcbec：合盖触发 WindowServer 默认配置，导致分辨率被重置）；
            镜像基线（部署序列 mirror-probe 建立的「虚拟屏镜像主屏」）确立后，
-           检测到镜像解除自动重挂（2026-11-08 回炉扩查，遗留①护镜像并入）
-  --mirror-main  仅 --hold 有意义：建屏后启动即自动挂主屏镜像并确立护档镜像基线
+           检测到镜像解除自动重挂（2026-11-08 回炉扩查，遗留①镜像自动重挂并入）
+  --mirror-main  仅 --hold 有意义：建屏后启动即自动挂主屏镜像并确立镜像基线
                  （launchd/登录自启形态用——launchd 拉起的新进程=新建屏，镜像基线
                  不会自动回来，须启动即自挂）；失败只记日志不退出（建屏保活主语义
                  不变），需人工 mirror-probe 建基线（f8e4a9，2026-11-08）
@@ -240,10 +240,10 @@ func createVirtualDisplay(logicalWidth: Int, logicalHeight: Int, hidpi: Bool) th
     }
 
     // 模式 + 设置：HI-DPI 时列表里放像素模式（2x），非 HiDPI 时放 1x。
-    // 首选模式=目标档（WindowServer 只跑列表第一个，虚拟屏不认程序化模式切换）；
-    // 但 HiDPI 必须跟一组 extra 2x 档且 maxPixels=列表最大——hidpi-mirror 实证：
+    // 首选模式=目标分辨率（WindowServer 只跑列表第一个，虚拟屏不认程序化模式切换）；
+    // 但 HiDPI 必须跟一组额外的 2x 分辨率且 maxPixels=列表最大——hidpi-mirror 实证：
     // 「丰富的模式列表且最大值等于 maxPixels」是 macOS 合成真正 HiDPI 变体的必要条件，
-    // 单模式列表系统不认 HiDPI（1107 实测：points=pixels 全塌 1x）。
+    // 单模式列表系统不认 HiDPI（1107 实测：points=pixels 全部退回 1x）。
     let primaryMode = try newMode(width: UInt(pixelWidth), height: UInt(pixelHeight), refreshRate: 60.0)
     var modeList: [AnyObject] = [primaryMode]
     if hidpi {
@@ -303,7 +303,7 @@ func currentMode(_ id: CGDirectDisplayID) -> ModeReading? {
 }
 
 func allModes(_ id: CGDirectDisplayID) -> [ModeReading] {
-    // kCGDisplayShowDuplicateLowResolutionModes=true：把低分辨率重复档（含 HiDPI 档）一起列出来
+    // kCGDisplayShowDuplicateLowResolutionModes=true：把低分辨率的重复模式条目（含 HiDPI 分辨率）一起列出来
     let opts = [kCGDisplayShowDuplicateLowResolutionModes: kCFBooleanTrue as Any] as CFDictionary
     guard let array = CGDisplayCopyAllDisplayModes(id, opts) else { return [] }
     var out: [ModeReading] = []
@@ -330,10 +330,10 @@ func waitForNewDisplay(baseline: [CGDirectDisplayID], expected: CGDirectDisplayI
     return nil
 }
 
-// MARK: - 护档日志落盘（可观测性，2026-11-12）
+// MARK: - 恢复日志落盘（可观测性，2026-11-12）
 
-/// 护档日志落盘器（方案 a：stderr 保持不变，另追加文件）。
-/// 为什么落盘：app 形态下拉起的引擎 stderr 走内存环、不落盘，护档到底触发过没有事后不可查
+/// 恢复日志落盘器（方案 a：stderr 保持不变，另追加文件）。
+/// 为什么落盘：app 形态下拉起的引擎 stderr 走内存环、不落盘，恢复到底触发过没有事后不可查
 /// （上一轮排查全靠二进制取证）。文件是唯一进程外可查的持久通道，`tail` 即可取证。
 /// 轮转：当前文件超过 2MB 时改名为 vd-engine.log.1（覆盖旧 .1）后重开，避免无限增长。
 /// 并发：多实例可能同时写（生产引擎 + 测试引擎），append 以行粒度写入；行内带 pid 便于区分。
@@ -356,7 +356,7 @@ final class GuardLogFile {
         lock.unlock()
     }
 
-    /// 追加一行（自动补换行）。文件不可写时静默降级——日志不能影响护档主语义。
+    /// 追加一行（自动补换行）。文件不可写时静默降级——日志不能影响恢复主语义。
     func append(_ line: String) {
         guard let data = (line + "\n").data(using: .utf8) else { return }
         lock.lock()
@@ -394,25 +394,25 @@ final class GuardLogFile {
     }
 }
 
-/// 写一行带完整日期与 pid 的护档日志到磁盘（file-only；stderr 由 guardLog/errln 负责）。
+/// 写一行带完整日期与 pid 的恢复日志到磁盘（file-only；stderr 由 guardLog/errln 负责）。
 func guardFileLog(_ message: String) {
     let formatter = DateFormatter()
     formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
     GuardLogFile.shared.append("[mode-guard \(formatter.string(from: Date())) pid=\(getpid())] \(message)")
 }
 
-// MARK: - 护档（--hold 模式的分辨率守卫，goal-9dcbec）
+// MARK: - 分辨率自动恢复（--hold 模式的分辨率守卫，goal-9dcbec）
 
 // 背景（2026-11-08 凌晨实测，WindowServer 日志实锤）：
 //   合盖瞬间内屏被移除、镜像克隆被系统解除（set_clone_master / remove clone），拓扑重排时
 //   WindowServer 对本引擎建的虚拟屏走「持久化偏好校验失败 → Applying default configuration」，
-//   模式被改写（日志 setting mode 40 -> 12）——塌档发生在合盖时刻而非开盖，开盖后停塌不自愈。
-//   引擎侧唯一的确定性防线：监听显示重配，校验本屏模式，偏离目标档则重设。
+//   模式被改写（日志 setting mode 40 -> 12）——分辨率被重置发生在合盖时刻而非开盖，开盖后不再继续被重置，但也不会自行恢复。
+//   引擎侧唯一的确定性防线：监听显示重配，校验本屏模式，偏离目标分辨率则重设。
 //
 // 机制要点：
 //   · 重配事件的主体常常不是虚拟屏（合盖时事件主体是内屏 removed），所以任何重配事件都触发校验；
 //   · 校验动作幂等（模式匹配即不动），连环重排（合盖+开盖）靠 300ms 去抖合并为一次校验；
-//   · CGDisplayCopyDisplayMode 返回 NULL ≠ 塌档（镜像组 master 场景会返回 NULL，见 currentMode 注释），
+//   · CGDisplayCopyDisplayMode 返回 NULL ≠ 分辨率被重置（镜像组 master 场景会返回 NULL，见 currentMode 注释），
 //     NULL 只记日志不重设，避免在镜像场景误动作；
 //   · 镜像防护（2026-11-08 回炉，遗留①）：镜像基线确立（任一次校验读到 mirror_of==主屏）后，
 //     检测到 mirror_of ≠ 主屏 → 重挂主屏（API 用法照抄 mirror-probe mirror）。
@@ -422,7 +422,7 @@ func guardFileLog(_ message: String) {
 //     见文件头与 hold 分支注释）——hold 常驻改 NSApplication(.accessory)+app.run()；
 //     另以 beginActivity(.userInitiated) 豁免 App Nap（nohup 后台长跑的交付抑制面）。
 
-/// 引擎自身显示动作前的内屏快照（窗口外砸档恢复的判据起点）。
+/// 引擎自身显示动作前的内屏快照（窗口外分辨率被重置后，靠它判断恢复目标）。
 struct InnerActionSnapshot {
     let action: String
     let innerID: CGDirectDisplayID
@@ -430,35 +430,35 @@ struct InnerActionSnapshot {
     let capturedAt: Date
 }
 
-/// 档位四元是否一致（ModeReading 没做 Equatable，集中一个比较口径）。
+/// 分辨率四元组是否一致（ModeReading 没做 Equatable，集中一个比较口径）。
 private func sameMode(_ a: ModeReading, _ b: ModeReading) -> Bool {
     a.pointsWidth == b.pointsWidth && a.pointsHeight == b.pointsHeight
         && a.pixelsWidth == b.pixelsWidth && a.pixelsHeight == b.pixelsHeight
 }
 
-/// 档位的人类可读形态（日志统一口径）。
+/// 分辨率的人类可读形态（日志统一口径）。
 private func modeDescription(_ mode: ModeReading) -> String {
     "\(mode.pointsWidth)x\(mode.pointsHeight) 像素\(mode.pixelsWidth)x\(mode.pixelsHeight)"
 }
 
-/// 系统默认档落点（砸档判据）。本机实测（2026-11-12，macOS 27.0，MacBook 内屏）：
+/// 系统默认分辨率的落点（判定「分辨率被重置」的判据）。本机实测（2026-11-12，macOS 27.0，MacBook 内屏）：
 /// WindowServer 重排后「Applying default configuration」把内屏落到 1512x982（逻辑分辨率，HiDPI）。
-/// 只比逻辑分辨率：默认配置的像素随 backing scale 变化，逻辑档位才是稳定落点。
-/// 换机型时把该机默认档加进这个列表。
+/// 只比逻辑分辨率：默认配置的像素随 backing scale 变化，逻辑分辨率才是稳定落点。
+/// 换机型时把该机默认分辨率加进这个列表。
 private let systemDefaultInnerPoints: [(width: Int, height: Int)] = [(1512, 982)]
 
 private func isSystemDefaultInnerMode(_ mode: ModeReading) -> Bool {
     systemDefaultInnerPoints.contains { $0.width == mode.pointsWidth && $0.height == mode.pointsHeight }
 }
 
-/// 动作前记录内屏当前档位（在显示动作之前调用；只读，不改变任何状态）。
+/// 动作前记录内屏当前分辨率（在显示动作之前调用；只读，不改变任何状态）。
 func captureInnerSnapshot(action: String) -> InnerActionSnapshot? {
     let innerID = CGMainDisplayID()
     guard let mode = currentMode(innerID) else { return nil }
     return InnerActionSnapshot(action: action, innerID: innerID, mode: mode, capturedAt: Date())
 }
 
-/// 护档上下文：C 回调不能捕获 Swift 上下文，经 userInfo 指针传递（Unmanaged 来回）。
+/// 分辨率自动恢复的上下文：C 回调不能捕获 Swift 上下文，经 userInfo 指针传递（Unmanaged 来回）。
 final class ModeGuardContext {
     let displayID: CGDirectDisplayID
     let targetPointsW: Int
@@ -467,25 +467,25 @@ final class ModeGuardContext {
     let targetPixelsH: Int
     // 串行队列承载去抖与校验动作；重配回调来自 WindowServer 任意线程，不能在回调里直接干活
     let queue = DispatchQueue(label: "vd-engine.mode-guard")
-    // 队列身份：remirrorToMain 在护档队列上被调用时要同步开观察窗口（不能 async 排到读回之后）
+    // 队列身份：remirrorToMain 在分辨率自动恢复的队列上被调用时要同步开观察窗口（不能 async 排到读回之后）
     private let queueKey = DispatchSpecificKey<UInt8>()
     var pending: DispatchWorkItem?
     // 镜像基线是否已确立（2026-11-08 回炉）：任一次校验读到 mirror_of==主屏 即置位，
     // 进程常驻期不复位——确立后「mirror_of ≠ 主屏」才判为镜像解除并自动重挂。
     var mirrorBaselineEstablished = false
-    // 内屏档位守护（2026-11-08 合盖塌档修复 v2）：合盖→开盖时 WindowServer 重建整套显示配置，
-    // 会把内屏重置成默认档（实测 1800x1169 → 1512x982）。恢复目标=内屏离线前最后一轮在线时
-    // 读到的档位（用户合盖前手动改的分辨率也保留），只在重新上线后的 5s 窗口内恢复；
-    // 窗口外正常在线时只持续记录档位、不干预——用户在线改分辨率不会被锁死。
+    // 内屏分辨率守护（2026-11-08 合盖导致分辨率被重置的修复 v2）：合盖→开盖时 WindowServer 重建整套显示配置，
+    // 会把内屏重置成默认分辨率（实测 1800x1169 → 1512x982）。恢复目标=内屏离线前最后一轮在线时
+    // 读到的分辨率（用户合盖前手动改的分辨率也保留），只在重新上线后的 5s 窗口内恢复；
+    // 窗口外正常在线时只持续记录分辨率、不干预——用户在线改分辨率不会被锁死。
     var innerDisplayID: CGDirectDisplayID?
     var innerLastSeenMode: ModeReading?
     var innerWasOnline = true
     var innerRestoreDeadline: Date?
 
-    // —— 窗口外砸档恢复（2026-11-12，goal-591461 机制）——
+    // —— 窗口外分辨率被重置后的恢复（2026-11-12，goal-591461 机制）——
     // 引擎自身显示动作（建屏/重挂镜像）会触发 WindowServer 重排，可能在内屏始终在线时
-    // 把内屏砸回系统默认档。5s 离线→上线窗口覆盖不到这类砸档，这里单独开动作后观察窗口：
-    // 动作前快照非默认档、窗口内读到默认档才恢复；其余变化只记日志，不锁死用户主动改档。
+    // 把内屏打回系统默认分辨率。5s 离线→上线窗口覆盖不到这类重置，这里单独开动作后观察窗口：
+    // 动作前的快照不是默认分辨率、窗口内读到默认分辨率才恢复；其余变化只记日志，不锁死用户主动改分辨率。
     var actionSnapshot: InnerActionSnapshot?
     var actionWindowDeadline: Date?
     var actionWindowHandled = false      // 已做过恢复尝试（成功或失败），窗口内不再反复重设
@@ -517,8 +517,8 @@ final class ModeGuardContext {
         GuardLogFile.shared.append("[mode-guard \(fullFormatter.string(from: now)) pid=\(getpid())] \(message)")
     }
 
-    /// 动作后开 3s 观察窗口。在护档队列上调用时同步开窗（remirrorToMain 的读回会阻塞队列，
-    /// async 开窗会让窗口起点晚于动作最多 1s）；其他线程调用时排到护档队列，与 verify 串行。
+    /// 动作后开 3s 观察窗口。在分辨率自动恢复的队列上调用时同步开窗（remirrorToMain 的读回会阻塞队列，
+    /// async 开窗会让窗口起点晚于动作最多 1s）；其他线程调用时排到同一个队列，与 verify 串行。
     func armActionWindow(snapshot: InnerActionSnapshot?) {
         if isOnGuardQueue {
             armActionWindowLocked(snapshot: snapshot)
@@ -529,15 +529,15 @@ final class ModeGuardContext {
 
     private func armActionWindowLocked(snapshot: InnerActionSnapshot?) {
         guard let snapshot = snapshot else {
-            guardLog("动作观察窗口：内屏快照缺失（动作前读不到内屏档位），不开窗口")
+            guardLog("动作观察窗口：内屏快照缺失（动作前读不到内屏分辨率），不开窗口")
             return
         }
         let existing = actionSnapshot
         var keepEarlier = false
         if let existing = existing, !actionWindowHandled,
            isSystemDefaultInnerMode(snapshot.mode), !isSystemDefaultInnerMode(existing.mode) {
-            // 新动作前快照已是默认档：上一个动作可能已经砸档（如建屏后紧接着 --mirror-main 重挂）。
-            // 保留更早的非默认快照作为恢复目标，避免把真正的砸档目标覆盖成默认档。
+            // 新动作前的快照已经是默认分辨率：上一个动作可能已经把分辨率重置了（如建屏后紧接着 --mirror-main 重挂）。
+            // 保留更早的非默认快照作为恢复目标，避免把真正的恢复目标覆盖成默认分辨率。
             keepEarlier = true
         } else {
             actionSnapshot = snapshot
@@ -549,13 +549,13 @@ final class ModeGuardContext {
         actionWindowSequence += 1
         let sequence = actionWindowSequence
         if keepEarlier, let existing = existing {
-            guardLog("动作 \(snapshot.action) 前快照已是默认档 \(modeDescription(snapshot.mode))；沿用上一个动作 \(existing.action) 的非默认快照 \(modeDescription(existing.mode)) 作为恢复目标，观察窗口顺延 3s")
+            guardLog("动作 \(snapshot.action) 前快照已是默认分辨率 \(modeDescription(snapshot.mode))；沿用上一个动作 \(existing.action) 的非默认快照 \(modeDescription(existing.mode)) 作为恢复目标，观察窗口顺延 3s")
         } else {
             let captureFormatter = DateFormatter()
             captureFormatter.dateFormat = "HH:mm:ss.SSS"
             guardLog("动作 \(snapshot.action) 前快照（拍于 \(captureFormatter.string(from: snapshot.capturedAt))）：内屏 id=\(snapshot.innerID) \(modeDescription(snapshot.mode))；开 3s 观察窗口")
         }
-        // 立即查一次（动作可能已经砸档），随后窗口内多点抽查（重配事件之外兜底）。
+        // 立即查一次（动作可能已经把分辨率重置了），随后窗口内多点抽查（重配事件之外兜底）。
         checkActionWindowInnerRestore(ctx: self)
         for delay in [0.4, 1.0, 1.6, 2.2, 2.8] {
             queue.asyncAfter(deadline: .now() + delay) { [weak self] in
@@ -574,7 +574,7 @@ final class ModeGuardContext {
         let current = onlineDisplayIDs().contains(snapshot.innerID) ? currentMode(snapshot.innerID) : nil
         let nowText = current.map(modeDescription) ?? "读不到（内屏离线或模式为 NULL）"
         if actionWindowRestored {
-            guardLog("动作 \(snapshot.action) 观察窗口结束（3s）：已恢复快照档 \(modeDescription(snapshot.mode))，当前内屏 \(nowText)")
+            guardLog("动作 \(snapshot.action) 观察窗口结束（3s）：已恢复到快照分辨率 \(modeDescription(snapshot.mode))，当前内屏 \(nowText)")
         } else if actionWindowHandled {
             guardLog("动作 \(snapshot.action) 观察窗口结束（3s）：恢复未成功/已放弃，当前内屏 \(nowText)")
         } else {
@@ -596,7 +596,7 @@ private func modeMatchesTarget(_ mode: ModeReading?, ctx: ModeGuardContext) -> B
         && mode.pixelsHeight == ctx.targetPixelsH
 }
 
-/// 在指定屏的档位列表里找 points/pixels 双匹配的 CGDisplayMode（CGDisplaySetDisplayMode 需要档位对象）。
+/// 在指定屏的可选分辨率列表里找 points/pixels 双匹配的 CGDisplayMode（CGDisplaySetDisplayMode 需要一个 CGDisplayMode 对象）。
 private func findMode(on displayID: CGDirectDisplayID, pointsW: Int, pointsH: Int, pixelsW: Int, pixelsH: Int) -> CGDisplayMode? {
     let opts = [kCGDisplayShowDuplicateLowResolutionModes: kCFBooleanTrue as Any] as CFDictionary
     guard let array = CGDisplayCopyAllDisplayModes(displayID, opts) else { return nil }
@@ -611,7 +611,7 @@ private func findMode(on displayID: CGDirectDisplayID, pointsW: Int, pointsH: In
     return nil
 }
 
-/// 本引擎虚拟屏的目标档查询（findMode 的既有调用形态）。
+/// 本引擎虚拟屏的目标分辨率查询（findMode 的既有调用形态）。
 private func findTargetMode(ctx: ModeGuardContext) -> CGDisplayMode? {
     findMode(on: ctx.displayID,
              pointsW: ctx.targetPointsW, pointsH: ctx.targetPointsH,
@@ -623,7 +623,7 @@ private func findTargetMode(ctx: ModeGuardContext) -> CGDisplayMode? {
 /// → CGComplete(.forSession)，方向 slave=本引擎虚拟屏、master=主屏（内屏）。
 /// 返回重挂是否读回验证通过（最多 1s，与 mirror-probe 读回同法）。
 private func remirrorToMain(ctx: ModeGuardContext, mainID: CGDirectDisplayID) -> Bool {
-    // 窗口外砸档恢复（2026-11-12）：重挂镜像本身是引擎的显示动作，动作前记录内屏快照；
+    // 窗口外分辨率被重置后的恢复（2026-11-12）：重挂镜像本身是引擎的显示动作，动作前记录内屏快照；
     // CGComplete 成功后开 3s 观察窗口（即使镜像读回失败，重排也可能已经发生）。
     let actionSnapshot = captureInnerSnapshot(action: "remirrorToMain(master=\(mainID))")
     var config: CGDisplayConfigRef?
@@ -651,9 +651,9 @@ private func remirrorToMain(ctx: ModeGuardContext, mainID: CGDirectDisplayID) ->
     return false
 }
 
-/// 内屏档位守护（2026-11-08 合盖塌档修复 v2）：
-/// 合盖→开盖时 WindowServer 重建整套显示配置，会把内屏重置成默认档（实测 1800x1169 → 1512x982）。
-/// 恢复目标=内屏离线前最后一轮在线读到的档位；只在重新上线后的 5s 窗口内恢复；窗口外只记录不干预。
+/// 内屏分辨率守护（2026-11-08 合盖导致分辨率被重置的修复 v2）：
+/// 合盖→开盖时 WindowServer 重建整套显示配置，会把内屏重置成默认分辨率（实测 1800x1169 → 1512x982）。
+/// 恢复目标=内屏离线前最后一轮在线读到的分辨率；只在重新上线后的 5s 窗口内恢复；窗口外只记录不干预。
 private func restoreInnerIfJustReturned(ctx: ModeGuardContext) {
     guard let innerID = ctx.innerDisplayID else { return }
     let online = onlineDisplayIDs().contains(innerID)
@@ -662,7 +662,7 @@ private func restoreInnerIfJustReturned(ctx: ModeGuardContext) {
         let target = ctx.innerLastSeenMode.map {
             "\($0.pointsWidth)x\($0.pointsHeight) 像素\($0.pixelsWidth)x\($0.pixelsHeight)"
         } ?? "未记录"
-        ctx.guardLog("内屏重新上线（id=\(innerID)），进入 5s 档位恢复窗口（恢复目标=离线前 \(target)）")
+        ctx.guardLog("内屏重新上线（id=\(innerID)），进入 5s 分辨率恢复窗口（恢复目标=离线前 \(target)）")
     }
     ctx.innerWasOnline = online
     guard online else { return }
@@ -672,7 +672,7 @@ private func restoreInnerIfJustReturned(ctx: ModeGuardContext) {
         return
     }
     guard let target = ctx.innerLastSeenMode, let reading = currentMode(innerID) else {
-        ctx.guardLog("内屏档位恢复窗口内读数缺失（目标或当前模式读不到），本轮跳过")
+        ctx.guardLog("内屏分辨率恢复窗口内读数缺失（目标或当前模式读不到），本轮跳过")
         return
     }
     if reading.pointsWidth == target.pointsWidth && reading.pointsHeight == target.pointsHeight
@@ -684,12 +684,12 @@ private func restoreInnerIfJustReturned(ctx: ModeGuardContext) {
     guard let mode = findMode(on: innerID,
                               pointsW: target.pointsWidth, pointsH: target.pointsHeight,
                               pixelsW: target.pixelsWidth, pixelsH: target.pixelsHeight) else {
-        ctx.guardLog("内屏合盖塌档（当前 \(observed)，目标 \(base)），档位列表里找不到目标档，放弃恢复")
+        ctx.guardLog("内屏合盖后分辨率被重置（当前 \(observed)，目标 \(base)），可选分辨率列表里找不到目标分辨率，放弃恢复")
         return
     }
     let setError = CGDisplaySetDisplayMode(innerID, mode, nil)
     guard setError == .success else {
-        ctx.guardLog("内屏合盖塌档（当前 \(observed)），CGDisplaySetDisplayMode 失败: CGError=\(setError.rawValue)")
+        ctx.guardLog("内屏合盖后分辨率被重置（当前 \(observed)），CGDisplaySetDisplayMode 失败: CGError=\(setError.rawValue)")
         return
     }
     var verified = false
@@ -703,15 +703,15 @@ private func restoreInnerIfJustReturned(ctx: ModeGuardContext) {
         usleep(200_000)
     }
     if verified {
-        ctx.guardLog("内屏合盖塌档（当前 \(observed)），已恢复离线前档位 \(base)，读回验证通过")
+        ctx.guardLog("内屏合盖后分辨率被重置（当前 \(observed)），已恢复到离线前的分辨率 \(base)，读回验证通过")
     } else {
-        ctx.guardLog("内屏合盖塌档（当前 \(observed)），已发恢复但读回未达目标档，需人工核查")
+        ctx.guardLog("内屏合盖后分辨率被重置（当前 \(observed)），已发出恢复请求，但读回未达目标分辨率，需人工核查")
     }
 }
 
-/// 窗口外砸档恢复（2026-11-12，goal-591461 机制）：
-/// 引擎自身显示动作（建屏/重挂镜像）后 3s 窗口内，若内屏从「非默认档」跳到「系统默认档」，
-/// 判为被自己的动作砸掉，恢复动作前快照档并读回验证（沿用 restoreInnerIfJustReturned 的读回写法）。
+/// 窗口外分辨率被重置后的恢复（2026-11-12，goal-591461 机制）：
+/// 引擎自身显示动作（建屏/重挂镜像）后 3s 窗口内，若内屏从「非默认分辨率」跳到「系统默认分辨率」，
+/// 判为被引擎自己的动作重置了，恢复到动作前的快照分辨率并读回验证（沿用 restoreInnerIfJustReturned 的读回写法）。
 /// 窗口外、或变化不落在该跳变上 → 只记日志不动作（避免和用户主动改分辨率打架）。
 /// 离线→上线 5s 恢复窗口优先：两套恢复同时命中时本窗口让位，避免互相抢拍。
 private func checkActionWindowInnerRestore(ctx: ModeGuardContext) {
@@ -729,14 +729,14 @@ private func checkActionWindowInnerRestore(ctx: ModeGuardContext) {
     guard onlineDisplayIDs().contains(snapshot.innerID) else {
         if !ctx.actionWindowNoteLogged {
             ctx.actionWindowNoteLogged = true
-            ctx.guardLog("动作 \(snapshot.action) 观察窗口：内屏 \(snapshot.innerID) 不在线，砸档判据不适用，本轮不动作")
+            ctx.guardLog("动作 \(snapshot.action) 观察窗口：内屏 \(snapshot.innerID) 不在线，判定「分辨率被重置」的前提不成立，本轮不动作")
         }
         return
     }
     guard let current = currentMode(snapshot.innerID) else {
         if !ctx.actionWindowNoteLogged {
             ctx.actionWindowNoteLogged = true
-            ctx.guardLog("动作 \(snapshot.action) 观察窗口：内屏档位读数缺失（可能处于镜像组），本轮不动作")
+            ctx.guardLog("动作 \(snapshot.action) 观察窗口：内屏分辨率读数缺失（可能处于镜像组），本轮不动作")
         }
         return
     }
@@ -745,22 +745,22 @@ private func checkActionWindowInnerRestore(ctx: ModeGuardContext) {
     guard isSystemDefaultInnerMode(current), !isSystemDefaultInnerMode(snapshot.mode) else {
         if !ctx.actionWindowNoteLogged {
             ctx.actionWindowNoteLogged = true
-            ctx.guardLog("动作 \(snapshot.action) 观察窗口：内屏档位变化 \(modeDescription(snapshot.mode)) → \(observed)，不落在「非默认档→默认档」跳变，不动作（视为用户主动改档）")
+            ctx.guardLog("动作 \(snapshot.action) 观察窗口：内屏分辨率变化 \(modeDescription(snapshot.mode)) → \(observed)，不落在「非默认分辨率 → 默认分辨率」这个跳变上，不动作（视为用户主动改分辨率）")
         }
         return
     }
-    // 命中判据：恢复快照档并读回验证。
+    // 命中判据：恢复到快照分辨率并读回验证。
     guard let targetMode = findMode(on: snapshot.innerID,
                                     pointsW: snapshot.mode.pointsWidth, pointsH: snapshot.mode.pointsHeight,
                                     pixelsW: snapshot.mode.pixelsWidth, pixelsH: snapshot.mode.pixelsHeight) else {
         ctx.actionWindowHandled = true
-        ctx.guardLog("动作 \(snapshot.action) 砸档命中（\(modeDescription(snapshot.mode)) → \(observed)），但档位列表里找不到快照档，放弃恢复")
+        ctx.guardLog("动作 \(snapshot.action) 后检测到分辨率被重置（\(modeDescription(snapshot.mode)) → \(observed)），但可选分辨率列表里找不到快照分辨率，放弃恢复")
         return
     }
     let setError = CGDisplaySetDisplayMode(snapshot.innerID, targetMode, nil)
     guard setError == .success else {
         ctx.actionWindowHandled = true
-        ctx.guardLog("动作 \(snapshot.action) 砸档命中（\(modeDescription(snapshot.mode)) → \(observed)），CGDisplaySetDisplayMode 失败: CGError=\(setError.rawValue)")
+        ctx.guardLog("动作 \(snapshot.action) 后检测到分辨率被重置（\(modeDescription(snapshot.mode)) → \(observed)），CGDisplaySetDisplayMode 失败: CGError=\(setError.rawValue)")
         return
     }
     var verified = false
@@ -775,21 +775,21 @@ private func checkActionWindowInnerRestore(ctx: ModeGuardContext) {
     if verified {
         ctx.innerLastSeenMode = snapshot.mode
         ctx.actionWindowRestored = true
-        ctx.guardLog("动作 \(snapshot.action) 砸档命中（\(modeDescription(snapshot.mode)) → \(observed)），已恢复快照档 \(modeDescription(snapshot.mode))，读回验证通过")
+        ctx.guardLog("动作 \(snapshot.action) 后检测到分辨率被重置（\(modeDescription(snapshot.mode)) → \(observed)），已恢复到快照分辨率 \(modeDescription(snapshot.mode))，读回验证通过")
     } else {
         let after = currentMode(snapshot.innerID).map(modeDescription) ?? "?"
-        ctx.guardLog("动作 \(snapshot.action) 砸档命中（\(modeDescription(snapshot.mode)) → \(observed)），已发恢复但读回仍是 \(after)，需人工核查")
+        ctx.guardLog("动作 \(snapshot.action) 后检测到分辨率被重置（\(modeDescription(snapshot.mode)) → \(observed)），已发出恢复请求，但读回仍是 \(after)，需人工核查")
     }
 }
 
-/// 校验本屏镜像与模式并按需恢复（在护档串行队列上执行）。成功/失败都打 stderr 日志（重定向到 vd-prod.err 可查）。
+/// 校验本屏镜像与模式并按需恢复（在分辨率自动恢复的串行队列上执行）。成功/失败都打 stderr 日志（重定向到 vd-prod.err 可查）。
 ///
-/// 双查（2026-11-08 回炉，护镜像并入；查序=镜像先于档位）：
+/// 双查（2026-11-08 回炉，镜像自动重挂并入；查序=镜像先于分辨率）：
 ///   1. 镜像查：基线确立后 mirror_of ≠ 主屏 → 重挂主屏+读回验证；重挂成功即返回
-///      （重挂后档位随主屏=目标档，本轮档位查无需再做）；镜像正常也即返回
-///      （镜像态档位随主屏，档位查无意义且有伪判，见分支内注释）；基线未确立只记日志
+///      （重挂后分辨率随主屏=目标分辨率，本轮分辨率检查无需再做）；镜像正常也即返回
+///      （镜像态分辨率随主屏，分辨率检查无意义且会误判，见分支内注释）；基线未确立只记日志
 ///      （fresh start 的独立态不是「镜像解除」，部署序列随后建基线）。
-///   2. 档位查：四元比对，偏档重设（原逻辑不变；仅独立态到达）。
+///   2. 分辨率检查：逻辑宽高与像素宽高四个数逐个比对，偏离目标就重设（原逻辑不变；仅独立态到达）。
 private func verifyAndRestore(ctx: ModeGuardContext) {
     guard onlineDisplayIDs().contains(ctx.displayID) else {
         ctx.guardLog("目标屏 \(ctx.displayID) 不在线，跳过校验")
@@ -797,23 +797,23 @@ private func verifyAndRestore(ctx: ModeGuardContext) {
     }
 
     // —— 显示配置是一份（2026-11-08 归并定性）——
-    // 合盖/开盖会让 WindowServer 重排整套显示配置：拓扑（哪块屏在线）、镜像关系、各屏档位。
-    // 这三类字段此前按入口依次暴露、各自修过一次（虚拟屏档位 → 镜像关系 → 内屏档位）。
+    // 合盖/开盖会让 WindowServer 重排整套显示配置：拓扑（哪块屏在线）、镜像关系、各屏分辨率。
+    // 这三类字段此前按入口依次暴露、各自修过一次（虚拟屏分辨率 → 镜像关系 → 内屏分辨率）。
     // 这里不再按入口打补丁，而按「期望配置」逐字段核对，每字段独立恢复、幂等：
-    //   1. 内屏档位：合盖→开盖塌档，恢复离线前档位（restoreInnerIfJustReturned）
+    //   1. 内屏分辨率：合盖→开盖时分辨率被重置，恢复到离线前的分辨率（restoreInnerIfJustReturned）
     //   2. 镜像关系：虚拟屏必须镜像内屏，解除则重挂（remirrorToMain）
-    //   3. 虚拟屏档位：本引擎屏偏离目标档则重设（findTargetMode + CGDisplaySetDisplayMode）
+    //   3. 虚拟屏分辨率：本引擎屏偏离目标分辨率则重设（findTargetMode + CGDisplaySetDisplayMode）
     // 再接新的显示对象（外接屏、缩放等）时在此追加同一形态的核对，不再另起恢复器。
     restoreInnerIfJustReturned(ctx: ctx)
-    // 窗口外砸档恢复（2026-11-12）：引擎自身显示动作后的 3s 观察窗口内，
-    // 内屏从非默认档跳到系统默认档 → 判为被自己的动作砸掉，恢复动作前快照。
+    // 窗口外分辨率被重置后的恢复（2026-11-12）：引擎自身显示动作后的 3s 观察窗口内，
+    // 内屏从非默认分辨率跳到系统默认分辨率 → 判为被引擎自己的动作重置了，恢复到动作前的快照分辨率。
     // 放在离线→上线恢复之后：离线场景优先，本窗口在 5s 窗口内让位（函数内判断）。
     checkActionWindowInnerRestore(ctx: ctx)
 
     // —— 镜像查 ——
     let mainID = CGMainDisplayID()
     if mainID == ctx.displayID {
-        // 本屏即主屏（合盖内屏被移除的独立态）：无内屏可镜像；档位查继续（独立态保档）
+        // 本屏即主屏（合盖内屏被移除的独立态）：无内屏可镜像；分辨率检查继续（独立态下仍要保住分辨率）
         ctx.guardLog("本屏即主屏（无内屏可镜像），跳过镜像校验")
     } else {
         let mirrorOf = CGDisplayMirrorsDisplay(ctx.displayID)
@@ -825,10 +825,10 @@ private func verifyAndRestore(ctx: ModeGuardContext) {
             } else {
                 ctx.guardLog("镜像正常（mirror_of=\(mainID)），不动作")
             }
-            // 镜像态档位随主屏（读数=主屏档位或 NULL），档位查无意义且有伪判：
-            // 实测（2026-11-08 测试屏）镜像建立/重挂后 slave 档位读数=主屏档位，
-            // 目标档≠主屏档位时会被误判成偏档并发重设（本屏渲染本就跟随主屏，重设只改偏好+日志噪声）。
-            // 跳过本轮档位查；独立态（镜像未确立/本屏即主屏/重挂失败）的档位查不受影响。
+            // 镜像态分辨率随主屏（读数=主屏分辨率或 NULL），分辨率检查无意义且会误判：
+            // 实测（2026-11-08 测试屏）镜像建立/重挂后 slave 的分辨率读数=主屏分辨率，
+            // 目标分辨率≠主屏分辨率时会被误判成「分辨率偏离」并发出重设（本屏渲染本就跟随主屏，重设只改偏好+日志噪声）。
+            // 跳过本轮分辨率检查；独立态（镜像未确立/本屏即主屏/重挂失败）的分辨率检查不受影响。
             return
         } else if ctx.mirrorBaselineEstablished {
             if remirrorToMain(ctx: ctx, mainID: mainID) {
@@ -836,17 +836,17 @@ private func verifyAndRestore(ctx: ModeGuardContext) {
                 ctx.mirrorBaselineEstablished = true
                 return
             }
-            // 重挂未生效：不 return，继续档位校验（此时屏处于独立态，保档仍有意义）
+            // 重挂未生效：不 return，继续分辨率校验（此时屏处于独立态，保住分辨率仍有意义）
             ctx.guardLog("检测到镜像解除（mirror_of=\(observed)），已发重挂但读回仍是 mirror_of=\(CGDisplayMirrorsDisplay(ctx.displayID) == kCGNullDirectDisplay ? "none" : String(CGDisplayMirrorsDisplay(ctx.displayID)))——重挂未生效，需人工核查")
         } else {
             ctx.guardLog("镜像未确立（mirror_of=\(observed)，主屏=\(mainID)）——等待部署序列建立镜像基线，不动作")
         }
     }
 
-    // —— 档位查（原有逻辑） ——
+    // —— 分辨率检查（原有逻辑） ——
     let current = currentMode(ctx.displayID)
     if current == nil {
-        // NULL ≠ 塌档：镜像组 master 场景 CGDisplayCopyDisplayMode 返回 NULL（见 currentMode 注释），不动作
+        // NULL ≠ 分辨率被重置：镜像组 master 场景 CGDisplayCopyDisplayMode 返回 NULL（见 currentMode 注释），不动作
         ctx.guardLog("当前模式读数 NULL（可能处于镜像组），不动作")
         return
     }
@@ -856,12 +856,12 @@ private func verifyAndRestore(ctx: ModeGuardContext) {
     }
     let observed = current.map { "\($0.pointsWidth)x\($0.pointsHeight) 像素\($0.pixelsWidth)x\($0.pixelsHeight)" } ?? "?"
     guard let target = findTargetMode(ctx: ctx) else {
-        ctx.guardLog("检测到偏档（当前 \(observed)），但档位列表里找不到目标档 \(ctx.targetPointsW)x\(ctx.targetPointsH)/\(ctx.targetPixelsW)x\(ctx.targetPixelsH)，无法重设")
+        ctx.guardLog("检测到分辨率偏离目标（当前 \(observed)），但可选分辨率列表里找不到目标分辨率 \(ctx.targetPointsW)x\(ctx.targetPointsH)/\(ctx.targetPixelsW)x\(ctx.targetPixelsH)，无法重设")
         return
     }
     let setError = CGDisplaySetDisplayMode(ctx.displayID, target, nil)
     guard setError == .success else {
-        ctx.guardLog("检测到偏档（当前 \(observed)），CGDisplaySetDisplayMode 失败: CGError=\(setError.rawValue)")
+        ctx.guardLog("检测到分辨率偏离目标（当前 \(observed)），CGDisplaySetDisplayMode 失败: CGError=\(setError.rawValue)")
         return
     }
     // 写后读回：给 WindowServer 落盘时间，最多 1s（与 mirror-probe 读回同法）
@@ -874,10 +874,10 @@ private func verifyAndRestore(ctx: ModeGuardContext) {
         usleep(200_000)
     }
     if verified {
-        ctx.guardLog("检测到偏档（当前 \(observed)），已重设回 \(ctx.targetPointsW)x\(ctx.targetPointsH) HiDPI，读回验证通过")
+        ctx.guardLog("检测到分辨率偏离目标（当前 \(observed)），已重设回 \(ctx.targetPointsW)x\(ctx.targetPointsH) HiDPI，读回验证通过")
     } else {
         let after = currentMode(ctx.displayID).map { "\($0.pointsWidth)x\($0.pointsHeight)" } ?? "?"
-        ctx.guardLog("检测到偏档（当前 \(observed)），已发重设但读回仍是 \(after)——重设未生效，需人工核查")
+        ctx.guardLog("检测到分辨率偏离目标（当前 \(observed)），已发出重设请求，但读回仍是 \(after)——重设未生效，需人工核查")
     }
 }
 
@@ -896,10 +896,10 @@ private func modeGuardReconfigurationCallback(_ display: CGDirectDisplayID,
     ctx.queue.asyncAfter(deadline: .now() + 0.3, execute: work)
 }
 
-/// 注册护档：进入 --hold 前调用。进程常驻期间一直生效（退出随进程清理，无需显式注销）。
+/// 注册分辨率自动恢复：进入 --hold 前调用。进程常驻期间一直生效（退出随进程清理，无需显式注销）。
 /// mirrorMain=true（启动参数 --mirror-main，f8e4a9）：注册成功后启动即自动挂主屏镜像并确立基线——
 /// launchd/登录自启拉起的新进程=新建屏，镜像基线不会自动回来，必须启动即自挂。
-/// actionSnapshot：建屏动作前的内屏快照（窗口外砸档恢复）；护档注册成功后开 3s 观察窗口。
+/// actionSnapshot：建屏动作前的内屏快照（供窗口外分辨率被重置后的恢复用）；分辨率自动恢复注册成功后开 3s 观察窗口。
 func startModeGuard(handle: VirtualDisplayHandle, logicalWidth: Int, logicalHeight: Int, hidpi: Bool, mirrorMain: Bool = false, actionSnapshot: InnerActionSnapshot? = nil) {
     let ctx = ModeGuardContext(
         displayID: handle.displayID,
@@ -909,28 +909,28 @@ func startModeGuard(handle: VirtualDisplayHandle, logicalWidth: Int, logicalHeig
         pixelsH: hidpi ? logicalHeight * 2 : logicalHeight
     )
     // ctx 需存活整个常驻期：retain 交给回调侧（passRetained），由注册的回调长期持有——
-    // 这里用全局集合持有引用更直白：护档上下文与进程同生命周期，无需配对释放。
+    // 这里用全局集合持有引用更直白：分辨率自动恢复的上下文与进程同生命周期，无需配对释放。
     modeGuardContexts.append(ctx)
-    // 记录内屏（建屏时的主屏）与当前档位：合盖塌档恢复的起点（2026-11-08）。
+    // 记录内屏（建屏时的主屏）与当前分辨率：合盖导致分辨率被重置后的恢复起点（2026-11-08）。
     let mainAtStart = CGMainDisplayID()
     if mainAtStart != handle.displayID, let mainMode = currentMode(mainAtStart) {
         ctx.innerDisplayID = mainAtStart
         ctx.innerLastSeenMode = mainMode
-        errln("内屏档位记录：id=\(mainAtStart) "
+        errln("内屏分辨率记录：id=\(mainAtStart) "
             + "\(mainMode.pointsWidth)x\(mainMode.pointsHeight) 像素\(mainMode.pixelsWidth)x\(mainMode.pixelsHeight)")
     }
     let unmanaged = Unmanaged.passRetained(ctx)
     let err = CGDisplayRegisterReconfigurationCallback(modeGuardReconfigurationCallback, unmanaged.toOpaque())
     if err == .success {
-        errln("护档已启动：目标档 \(logicalWidth)x\(logicalHeight)\(hidpi ? " HiDPI(像素 \(logicalWidth * 2)x\(logicalHeight * 2))" : "")，拓扑重排后自动校验")
+        errln("分辨率自动恢复已启动：目标分辨率 \(logicalWidth)x\(logicalHeight)\(hidpi ? " HiDPI(像素 \(logicalWidth * 2)x\(logicalHeight * 2))" : "")，拓扑重排后自动校验")
         // 初始校验：注册发生在建屏之后，「屏幕加入」的重配事件已经错过——
-        // 新 product 首次上线时 WindowServer 默认配置可能就没落在目标档（2026-11-08 测试屏实测），
+        // 新 product 首次上线时 WindowServer 默认配置可能就没落在目标分辨率上（2026-11-08 测试屏实测），
         // 启动后延时 1s（等建屏配置落定）先校验一轮，不依赖后续事件。
         let initial = DispatchWorkItem { verifyAndRestore(ctx: ctx) }
         ctx.pending = initial
         ctx.queue.asyncAfter(deadline: .now() + 1.0, execute: initial)
-        // --mirror-main（f8e4a9，2026-11-08）：启动即自挂主屏镜像，成功置基线（此后护档才认
-        // 「镜像解除」并自动重挂）。失败不退出——建屏保活是主语义，基线缺席时护档不重挂，
+        // --mirror-main（f8e4a9，2026-11-08）：启动即自挂主屏镜像，成功置基线（此后分辨率自动恢复才认
+        // 「镜像解除」并自动重挂）。失败不退出——建屏保活是主语义，基线缺席时分辨率自动恢复不会重挂镜像，
         // 日志写明需人工 mirror-probe 建基线（重试入口=下次重配事件前的部署序列）。
         if mirrorMain {
             let mainID = CGMainDisplayID()
@@ -940,22 +940,22 @@ func startModeGuard(handle: VirtualDisplayHandle, logicalWidth: Int, logicalHeig
                 ctx.mirrorBaselineEstablished = true
                 ctx.guardLog("镜像基线已建立（启动参数 --mirror-main），mirror_of=\(mainID)")
             } else {
-                ctx.guardLog("--mirror-main：镜像基线建立失败（读回 mirror_of 非主屏）——需人工 mirror-probe 建基线，基线确立前护档不会自动重挂")
+                ctx.guardLog("--mirror-main：镜像基线建立失败（读回 mirror_of 非主屏）——需人工 mirror-probe 建基线，基线确立前分辨率自动恢复不会重挂镜像")
             }
         }
-        // 建屏动作的 3s 观察窗口（2026-11-12）：建屏发生在护档注册之前，快照已由调用方在
-        // createVirtualDisplay 之前拍好；这里注册成功后开窗（立即查一次能覆盖建屏瞬间的砸档）。
-        // 放在 --mirror-main 之后：若启动重挂又触发了重排，建屏快照仍是更早的非默认档，窗口以它为准。
-        guardFileLog("护档启动：pid=\(getpid()) version=\(engineVersion) 目标档 \(logicalWidth)x\(logicalHeight)\(hidpi ? " HiDPI" : "")，日志落盘 \(GuardLogFile.shared.path)")
+        // 建屏动作的 3s 观察窗口（2026-11-12）：建屏发生在分辨率自动恢复注册之前，快照已由调用方在
+        // createVirtualDisplay 之前拍好；这里注册成功后开窗（立即查一次能覆盖建屏瞬间发生的分辨率被重置）。
+        // 放在 --mirror-main 之后：若启动重挂又触发了重排，建屏快照仍是更早的非默认分辨率，窗口以它为准。
+        guardFileLog("分辨率自动恢复已启动：pid=\(getpid()) version=\(engineVersion) 目标分辨率 \(logicalWidth)x\(logicalHeight)\(hidpi ? " HiDPI" : "")，日志落盘 \(GuardLogFile.shared.path)")
         ctx.armActionWindow(snapshot: actionSnapshot)
     } else {
         // passRetained 的引用没有消费方了，手动平衡避免泄漏
         unmanaged.release()
-        errln("护档注册失败: CGError=\(err.rawValue)（--hold 退化为纯持有，无护档）")
+        errln("分辨率自动恢复注册失败: CGError=\(err.rawValue)（--hold 退化为纯持有，不启用分辨率自动恢复）")
     }
 }
 
-// 护档上下文的全局存活集合（进程常驻期 = 护档期，无需配对释放；见 startModeGuard 注释）
+// 分辨率自动恢复上下文的全局存活集合（进程常驻期 = 恢复生效期，无需配对释放；见 startModeGuard 注释）
 private var modeGuardContexts: [ModeGuardContext] = []
 
 // App Nap 豁免句柄（2026-11-08 回炉，9dcbec 嫌疑②）：进程常驻期全程持有，释放即豁免结束；
@@ -1177,8 +1177,8 @@ case "create":
         exit(2)
     }
 
-    // 窗口外砸档恢复（2026-11-12）：建屏是引擎自己的显示动作，动作前记录内屏档位快照；
-    // 建屏成功后由 startModeGuard 开 3s 观察窗口（建屏瞬间砸档由窗口内立即检查覆盖）。
+    // 窗口外分辨率被重置后的恢复（2026-11-12）：建屏是引擎自己的显示动作，动作前记录内屏分辨率快照；
+    // 建屏成功后由 startModeGuard 开 3s 观察窗口（建屏瞬间发生的分辨率被重置由窗口内立即检查覆盖）。
     let createActionSnapshot = captureInnerSnapshot(action: "createVirtualDisplay")
     let baseline = onlineDisplayIDs()
     let handle: VirtualDisplayHandle
@@ -1212,15 +1212,15 @@ case "create":
             napActivity = ProcessInfo.processInfo.beginActivity(options: .userInitiated, reason: "vd-engine mode guard")
             errln("App Nap 豁免已启用（userInitiated，进程常驻期全程持有）")
             // 进程形状修复（2026-11-08 回炉二修，实证根因）：CGS 重配通知只投递给 app 形状进程。
-            // 对照实验（2026-11-08 11:3x，macOS 27.0）：同一事件流（displayplacer 偏档 + 镜像建立/解除）
+            // 对照实验（2026-11-08 11:3x，macOS 27.0）：同一事件流（displayplacer 改分辨率 + 镜像建立/解除）
             // 下，纯 CLI 进程注册成功（CGError=0）却零事件——pause()/RunLoop.main.run() 任一泵都收不到；
             // NSApplication 形状进程即时收到（flags=begin/SetMode/Moved/DesktopShapeChanged）。
             // 原首修（RunLoop 泵）与实施单嫌疑①（pause() 睡死无泵）据此被实验否定——泵不是缺口，
             // 进程形状才是。accessory 形状 = 无 Dock 图标无菜单栏的后台应用，重配通知通道随之激活。
             let app = NSApplication.shared
             app.setActivationPolicy(.accessory)
-            // 护档注册（goal-9dcbec）：合盖/开盖的拓扑重排会把本屏模式改写，
-            // 常驻期间监听重配并校验/重设，见「护档」节。须在 NSApplication 初始化之后注册
+            // 分辨率自动恢复注册（goal-9dcbec）：合盖/开盖的拓扑重排会把本屏模式改写，
+            // 常驻期间监听重配并校验/重设，见「分辨率自动恢复」节。须在 NSApplication 初始化之后注册
             // （通知投递依赖 app 形状的 CGS 连接）。
             startModeGuard(handle: handle, logicalWidth: logicalWidth, logicalHeight: logicalHeight, hidpi: hidpi, mirrorMain: mirrorMain, actionSnapshot: createActionSnapshot)
             errln("常驻持有中（Ctrl-C / SIGTERM 结束，屏随之销毁）")
@@ -1246,9 +1246,9 @@ case "remove":
         errln("显示器 \(target) 不在线（在线列表：\(online.map(String.init).joined(separator: ", "))）")
         exit(1)
     }
-    // 窗口外砸档恢复（2026-11-12）：remove 在本引擎里是跨进程失败路径（见下方说明），
+    // 窗口外分辨率被重置后的恢复（2026-11-12）：remove 在本引擎里是跨进程失败路径（见下方说明），
     // 不产生任何显示动作/重排，因此没有可观察的 3s 窗口；动作前快照仍落盘，
-    // 保证「谁触发、快照档」可事后查证（真正的销毁动作=持有进程退出，同样没有观察窗口）。
+    // 保证「谁触发、动作前的快照分辨率是多少」可事后查证（真正的销毁动作=持有进程退出，同样没有观察窗口）。
     if let snapshot = captureInnerSnapshot(action: "remove") {
         guardFileLog("动作 remove 前快照：内屏 id=\(snapshot.innerID) \(modeDescription(snapshot.mode))；跨进程无销毁能力，未产生显示动作，观察窗口不适用")
     }
@@ -1259,7 +1259,7 @@ case "remove":
     //   · 公开 API 侧也没有「删除显示器的函数」：CGDisplayConfiguration.h 只有
     //     Origin / WithDisplayMode / StereoOperation / MirrorOfDisplay / Mode，没有 Disabled/Remove。
     //   · 实验验证同向：SIGKILL 建屏进程后，在线列表里的 id 单调升（9→10→11）且
-    //     分辨率跳回 1920x1080 默认档——旧屏随进程死、看到的是重启后新建的屏，不是同一块屏活下来。
+    //     分辨率跳回 1920x1080 这个默认值——旧屏随进程死、看到的是重启后新建的屏，不是同一块屏活下来。
     // 所以 remove 只能在「同一进程持有实例」时成立，而 vd-engine 是单次调用的 CLI——它建的屏在 create 退出时
     // 就已经消失，remove 面对的必然是别的进程持有的屏。这里不静默失败：讲清楚怎么才能真正销毁它。
     if CGDisplayMirrorsDisplay(target) != kCGNullDirectDisplay {
@@ -1330,7 +1330,7 @@ case "hi":
     let hidpiModes = modes.filter { $0.isHiDPI }
     print("mode_count=\(modes.count)")
     print("hidpi_mode_count=\(hidpiModes.count)")
-    // 真屏会列出几十上百个模式（内屏实测 72 个 HiDPI 档），全打出来读不动，截到 40 条并报总数
+    // 真屏会列出几十上百个模式（内屏实测 72 个 HiDPI 分辨率），全打出来读不动，截到 40 条并报总数
     let listLimit = 40
     for mode in hidpiModes.prefix(listLimit) {
         print("hidpi_mode points=\(mode.pointsWidth)x\(mode.pointsHeight)"
