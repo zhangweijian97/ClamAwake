@@ -266,6 +266,16 @@ stderr states the specific cause. The common three:
 - 「内屏/虚拟屏 N 不在线」("internal/virtual display N not online") — the virtual display id is probably stale: after an engine restart the display is a new one and ids change (the old id died with the old process). Re-run `vd-engine list` for current ids.
 - 「镜像未生效：CGDisplayMirrorsDisplay(…)=…」("mirror did not take effect") — the configuration was submitted but read-back verification didn't pass within 1s. Retry once; check state any time with `mirror-probe status <id>` (read-only, no side effects).
 
+### The screen resolution got reset (blurry text / oversized UI)
+
+Display topology changes — closing or opening the lid, creating a virtual display — sometimes make macOS reset the built-in display to its default mode (e.g. 1800×1169 → 1512×982). While running, the engine restores the previous mode and writes what it did to a log:
+
+```bash
+tail -f ~/Library/Logs/ClamAwake/vd-engine.log
+```
+
+A typical line: `检测到分辨率被重置（1800×1169 → 1512×982），已恢复` ("resolution was reset … restored"). When the engine is not performing a display action of its own it only records and never intervenes, so a resolution you change by hand is left alone. The log rotates to `vd-engine.log.1` at 2 MB.
+
 ### A keep-alive already exists
 
 `vd-engine doctor`'s `keepalive_running` is warn, or `pgrep -x vd-engine` prints something:
