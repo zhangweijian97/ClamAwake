@@ -29,8 +29,12 @@
 //         → 想要哪个分辨率，就把它放列表第一位
 //         （2026-11-08 实测修正适用边界：「不认程序化切换」指拓扑重排时 WindowServer 按自己的
 //           默认逻辑选分辨率、无视列表首位；而 CGDisplaySetDisplayMode 在**创建者进程内**对本引擎
-//           建的屏有效（分辨率自动恢复实测：偏离目标后重设，读回通过）。外部进程对本屏 set 无效——虚拟屏的模式
-//           配置权属创建者进程（CGError 1001 / displayplacer 静默无效），分辨率自动恢复恰好就住在创建者进程里。）
+//           建的屏有效（分辨率自动恢复实测：偏离目标后重设，读回通过）。外部进程 set 是否有效分两种态：
+//           镜像组 slave 上任何进程直接 set 都被拒——CGError 1001 = kCGErrorIllegalArgument，因为要改的
+//           是镜像成员、参数非法，得先拆镜像组，与「模式配置权属」无关；非镜像态外部 set 有效
+//           （CGError=0，模式立即变并保持），随后创建者的护档约 0.5s 内把档位重设回目标，看起来像被覆盖。
+//           displayplacer 能改镜像 slave——它走整配置（短暂解除镜像再重建），收尾的
+//           「Error finalizing mirroring」只是它的报错，档位其实已落地。2026-11-12 goal-257d69 实测。）
 //       - 生命周期：虚拟屏活在创建进程的生命周期内（进程退出即消失），没有销毁 API
 //   · xtongs/mirrorscreen（Sources/MirrorScreen/VirtualDisplayManager.swift + Sources/CGVirtualDisplayBridge/*）
 //       - descriptor / settings / mode 三段式构造；displayID 从对象属性读（display.displayID != 0 才算建成功）
@@ -298,8 +302,35 @@ func reading(_ mode: CGDisplayMode) -> ModeReading {
 func currentMode(_ id: CGDirectDisplayID) -> ModeReading? {
     // 注意：虚拟屏成为硬件镜像组的 master 时 CGDisplayCopyDisplayMode 可能返回 NULL（hidpi-mirror 实测），
     // 这里按可空处理，不崩。
+    // 本机还有另一类 NULL（2026-11-12 goal-257d69 实测）：本进程在建屏前初始化过显示模式缓存时，
+    // 对随后新建的屏恒读 NULL（外部进程可读、重配事件也不刷新）——所以建屏前的读数改用 screenMode，见其注释。
     guard let mode = CGDisplayCopyDisplayMode(id) else { return nil }
     return reading(mode)
+}
+
+/// 用 NSScreen 读一块屏的当前模式（专供建屏前的读数，不影响本进程的 CG 显示模式缓存）。
+/// 为什么不用 currentMode：CGDisplayCopyDisplayMode 会初始化本进程的「显示模式缓存」，随后新建的虚拟屏
+/// 不在该缓存里，本进程对这块新屏就恒读 NULL（CGDisplayCopyDisplayMode 与 CGDisplayCopyAllDisplayModes
+/// 都返回 nil，重配事件也不刷新），外部进程同一时刻读得到真实模式——护档因此失明（2026-11-12 goal-257d69
+/// 对照实验：建屏前只调 CGDisplayCopyDisplayMode(主屏) 即复现 NULL；只调 CGGetOnlineDisplayList 无害；
+/// 只调 NSScreen 读数则正常）。
+/// NSScreen 只给逻辑尺寸（points）与 backingScaleFactor：像素=points×scale，取整；刷新率填 0——
+/// 本引擎没有任何比较用到 refresh（sameMode / isSystemDefaultInnerMode / modeDescription 都不比它）。
+private func screenMode(displayID: CGDirectDisplayID) -> ModeReading? {
+    let numberKey = NSDeviceDescriptionKey("NSScreenNumber")
+    for screen in NSScreen.screens {
+        guard let number = screen.deviceDescription[numberKey] as? NSNumber,
+              CGDirectDisplayID(number.uint32Value) == displayID else { continue }
+        let pointsWidth = Int(screen.frame.width.rounded())
+        let pointsHeight = Int(screen.frame.height.rounded())
+        let scale = Double(screen.backingScaleFactor)
+        return ModeReading(pointsWidth: pointsWidth,
+                           pointsHeight: pointsHeight,
+                           pixelsWidth: Int((Double(pointsWidth) * scale).rounded()),
+                           pixelsHeight: Int((Double(pointsHeight) * scale).rounded()),
+                           refreshRate: 0)
+    }
+    return nil
 }
 
 func allModes(_ id: CGDirectDisplayID) -> [ModeReading] {
@@ -462,9 +493,13 @@ private func isSystemDefaultInnerMode(_ mode: ModeReading) -> Bool {
 }
 
 /// 动作前记录内屏当前分辨率（在显示动作之前调用；只读，不改变任何状态）。
+/// 读法必须走 screenMode，不能用 currentMode（CGDisplayCopyDisplayMode）：本函数在 create 里、建屏之前调用，
+/// 走 CG 读法会初始化本进程的显示模式缓存，随后新建的虚拟屏不在缓存里 → 本进程对该屏恒读 NULL，
+/// 护档从 v0.3.1 起对本屏全程「NULL → 不动作」失明（2026-11-12 goal-257d69 对照实验；外部进程可读、
+/// 重配事件不刷新）。详见 screenMode 注释。
 func captureInnerSnapshot(action: String) -> InnerActionSnapshot? {
     let innerID = CGMainDisplayID()
-    guard let mode = currentMode(innerID) else { return nil }
+    guard let mode = screenMode(displayID: innerID) else { return nil }
     return InnerActionSnapshot(action: action, innerID: innerID, mode: mode, capturedAt: Date())
 }
 
@@ -746,7 +781,7 @@ private func checkActionWindowInnerRestore(ctx: ModeGuardContext) {
     guard let current = currentMode(snapshot.innerID) else {
         if !ctx.actionWindowNoteLogged {
             ctx.actionWindowNoteLogged = true
-            ctx.guardLog("\(actionLabel(snapshot.action))的观察窗口：内屏分辨率读数缺失（可能处于镜像组），本轮不动作")
+            ctx.guardLog("\(actionLabel(snapshot.action))的观察窗口：内屏读数缺失（可能已离线），本轮不动作")
         }
         return
     }
@@ -856,8 +891,11 @@ private func verifyAndRestore(ctx: ModeGuardContext) {
     // —— 分辨率检查（原有逻辑） ——
     let current = currentMode(ctx.displayID)
     if current == nil {
-        // NULL ≠ 分辨率被重置：镜像组 master 场景 CGDisplayCopyDisplayMode 返回 NULL（见 currentMode 注释），不动作
-        ctx.guardLog("当前模式读数 NULL（可能处于镜像组），不动作")
+        // 缺陷信号，不是正常态。镜像组 master 场景确实会 NULL（见 currentMode 注释），但 2026-11-12
+        // goal-257d69 实证的五次 NULL 全发生在非镜像屏——真实成因是本进程的显示模式缓存陈旧
+        // （建屏前读过一次模式 → 随后新建的屏不在缓存里，本进程对该屏恒读 NULL、重配事件也不刷新）。
+        // 正常引擎在独立态应读到模式：这里读不到＝本进程读不了本屏，不能当作「镜像态正常」放过。
+        ctx.guardLog("本进程读不到本屏模式（显示模式缓存陈旧）——本轮无法校验本屏档位，属缺陷信号，不可当作「镜像态正常」")
         return
     }
     if modeMatchesTarget(current, ctx: ctx) {

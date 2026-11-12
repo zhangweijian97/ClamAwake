@@ -276,6 +276,8 @@ tail -f ~/Library/Logs/ClamAwake/vd-engine.log
 
 A typical line: `检测到分辨率被重置（1800×1169 → 1512×982），已恢复` ("resolution was reset … restored"). When the engine is not performing a display action of its own it only records and never intervenes, so a resolution you change by hand is left alone. The log rotates to `vd-engine.log.1` at 2 MB.
 
+One more phenomenon that is easy to misread as a failure: **when two virtual displays coexist** (say, the ClamAwake app and the DSH plugin each running one, or a display being tested alongside), creating or destroying the other virtual display makes WindowServer re-lay out the display configuration, and this display's current mode may be rewritten along the way (observed: 1800×1169 → 800×600). While mirroring, the picture is driven by the main display, so a rewritten mode on this display does not self-heal on the spot — a mirror slave's mode cannot be set back directly; once it leaves mirroring (lid closed, this display becoming the main one) the guard restores the target mode. So a rewritten mode seen during mirroring is not evidence that the guard is broken.
+
 ### A keep-alive already exists
 
 `vd-engine doctor`'s `keepalive_running` is warn, or `pgrep -x vd-engine` prints something:
