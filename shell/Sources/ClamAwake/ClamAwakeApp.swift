@@ -83,7 +83,7 @@ private struct MenuContent: View {
         }
         Divider()
         Button("退出 ClamAwake") { NSApp.terminate(nil) }
-        Text("ClamAwake v0.3.0").font(.caption2)
+        Text("ClamAwake v0.3.1").font(.caption2)
     }
 
     // 保活开着时菜单栏图标换成实心（一眼可辨状态），这里是状态文字段
