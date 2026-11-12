@@ -441,6 +441,16 @@ private func modeDescription(_ mode: ModeReading) -> String {
     "\(mode.pointsWidth)x\(mode.pointsHeight) 像素\(mode.pixelsWidth)x\(mode.pixelsHeight)"
 }
 
+/// 把内部动作名翻成人话（日志里说「建屏」「重挂镜像」，不让读者去认代码标识符）。
+private func actionLabel(_ action: String) -> String {
+    if action.hasPrefix("remirrorToMain") { return "重挂镜像" }
+    switch action {
+    case "createVirtualDisplay": return "建屏"
+    case "remove": return "销毁屏"
+    default: return "显示动作（\(action)）"
+    }
+}
+
 /// 系统默认分辨率的落点（判定「分辨率被重置」的判据）。本机实测（2026-11-12，macOS 27.0，MacBook 内屏）：
 /// WindowServer 重排后「Applying default configuration」把内屏落到 1512x982（逻辑分辨率，HiDPI）。
 /// 只比逻辑分辨率：默认配置的像素随 backing scale 变化，逻辑分辨率才是稳定落点。
@@ -549,11 +559,11 @@ final class ModeGuardContext {
         actionWindowSequence += 1
         let sequence = actionWindowSequence
         if keepEarlier, let existing = existing {
-            guardLog("动作 \(snapshot.action) 前快照已是默认分辨率 \(modeDescription(snapshot.mode))；沿用上一个动作 \(existing.action) 的非默认快照 \(modeDescription(existing.mode)) 作为恢复目标，观察窗口顺延 3s")
+            guardLog("\(actionLabel(snapshot.action))前快照已是默认分辨率 \(modeDescription(snapshot.mode))；沿用上一次\(actionLabel(existing.action))的非默认快照 \(modeDescription(existing.mode)) 作为恢复目标，观察窗口顺延 3s")
         } else {
             let captureFormatter = DateFormatter()
             captureFormatter.dateFormat = "HH:mm:ss.SSS"
-            guardLog("动作 \(snapshot.action) 前快照（拍于 \(captureFormatter.string(from: snapshot.capturedAt))）：内屏 id=\(snapshot.innerID) \(modeDescription(snapshot.mode))；开 3s 观察窗口")
+            guardLog("\(actionLabel(snapshot.action))前快照（拍于 \(captureFormatter.string(from: snapshot.capturedAt))）：内屏 id=\(snapshot.innerID) \(modeDescription(snapshot.mode))；开 3s 观察窗口")
         }
         // 立即查一次（动作可能已经把分辨率重置了），随后窗口内多点抽查（重配事件之外兜底）。
         checkActionWindowInnerRestore(ctx: self)
@@ -574,11 +584,11 @@ final class ModeGuardContext {
         let current = onlineDisplayIDs().contains(snapshot.innerID) ? currentMode(snapshot.innerID) : nil
         let nowText = current.map(modeDescription) ?? "读不到（内屏离线或模式为 NULL）"
         if actionWindowRestored {
-            guardLog("动作 \(snapshot.action) 观察窗口结束（3s）：已恢复到快照分辨率 \(modeDescription(snapshot.mode))，当前内屏 \(nowText)")
+            guardLog("\(actionLabel(snapshot.action))的观察窗口结束（3s）：已恢复到快照分辨率 \(modeDescription(snapshot.mode))，当前内屏 \(nowText)")
         } else if actionWindowHandled {
-            guardLog("动作 \(snapshot.action) 观察窗口结束（3s）：恢复未成功/已放弃，当前内屏 \(nowText)")
+            guardLog("\(actionLabel(snapshot.action))的观察窗口结束（3s）：恢复未成功/已放弃，当前内屏 \(nowText)")
         } else {
-            guardLog("动作 \(snapshot.action) 观察窗口结束（3s）：未触发恢复，当前内屏 \(nowText)")
+            guardLog("\(actionLabel(snapshot.action))的观察窗口结束（3s）：未触发恢复，当前内屏 \(nowText)")
         }
         actionWindowDeadline = nil
         actionSnapshot = nil
@@ -722,21 +732,21 @@ private func checkActionWindowInnerRestore(ctx: ModeGuardContext) {
     if let offlineDeadline = ctx.innerRestoreDeadline, now <= offlineDeadline {
         if !ctx.actionWindowNoteLogged {
             ctx.actionWindowNoteLogged = true
-            ctx.guardLog("动作 \(snapshot.action) 观察窗口：内屏正处于离线→上线 5s 恢复窗口，本窗口让位（快照 \(modeDescription(snapshot.mode))）")
+            ctx.guardLog("\(actionLabel(snapshot.action))的观察窗口：内屏正处于离线→上线 5s 恢复窗口，本窗口让位（快照 \(modeDescription(snapshot.mode))）")
         }
         return
     }
     guard onlineDisplayIDs().contains(snapshot.innerID) else {
         if !ctx.actionWindowNoteLogged {
             ctx.actionWindowNoteLogged = true
-            ctx.guardLog("动作 \(snapshot.action) 观察窗口：内屏 \(snapshot.innerID) 不在线，判定「分辨率被重置」的前提不成立，本轮不动作")
+            ctx.guardLog("\(actionLabel(snapshot.action))的观察窗口：内屏 \(snapshot.innerID) 不在线，判定「分辨率被重置」的前提不成立，本轮不动作")
         }
         return
     }
     guard let current = currentMode(snapshot.innerID) else {
         if !ctx.actionWindowNoteLogged {
             ctx.actionWindowNoteLogged = true
-            ctx.guardLog("动作 \(snapshot.action) 观察窗口：内屏分辨率读数缺失（可能处于镜像组），本轮不动作")
+            ctx.guardLog("\(actionLabel(snapshot.action))的观察窗口：内屏分辨率读数缺失（可能处于镜像组），本轮不动作")
         }
         return
     }
@@ -745,7 +755,7 @@ private func checkActionWindowInnerRestore(ctx: ModeGuardContext) {
     guard isSystemDefaultInnerMode(current), !isSystemDefaultInnerMode(snapshot.mode) else {
         if !ctx.actionWindowNoteLogged {
             ctx.actionWindowNoteLogged = true
-            ctx.guardLog("动作 \(snapshot.action) 观察窗口：内屏分辨率变化 \(modeDescription(snapshot.mode)) → \(observed)，不落在「非默认分辨率 → 默认分辨率」这个跳变上，不动作（视为用户主动改分辨率）")
+            ctx.guardLog("\(actionLabel(snapshot.action))的观察窗口：内屏分辨率变化 \(modeDescription(snapshot.mode)) → \(observed)，不落在「非默认分辨率 → 默认分辨率」这个跳变上，不动作（视为用户主动改分辨率）")
         }
         return
     }
@@ -754,13 +764,13 @@ private func checkActionWindowInnerRestore(ctx: ModeGuardContext) {
                                     pointsW: snapshot.mode.pointsWidth, pointsH: snapshot.mode.pointsHeight,
                                     pixelsW: snapshot.mode.pixelsWidth, pixelsH: snapshot.mode.pixelsHeight) else {
         ctx.actionWindowHandled = true
-        ctx.guardLog("动作 \(snapshot.action) 后检测到分辨率被重置（\(modeDescription(snapshot.mode)) → \(observed)），但可选分辨率列表里找不到快照分辨率，放弃恢复")
+        ctx.guardLog("\(actionLabel(snapshot.action))后检测到分辨率被重置（\(modeDescription(snapshot.mode)) → \(observed)），但可选分辨率列表里找不到快照分辨率，放弃恢复")
         return
     }
     let setError = CGDisplaySetDisplayMode(snapshot.innerID, targetMode, nil)
     guard setError == .success else {
         ctx.actionWindowHandled = true
-        ctx.guardLog("动作 \(snapshot.action) 后检测到分辨率被重置（\(modeDescription(snapshot.mode)) → \(observed)），CGDisplaySetDisplayMode 失败: CGError=\(setError.rawValue)")
+        ctx.guardLog("\(actionLabel(snapshot.action))后检测到分辨率被重置（\(modeDescription(snapshot.mode)) → \(observed)），CGDisplaySetDisplayMode 失败: CGError=\(setError.rawValue)")
         return
     }
     var verified = false
@@ -775,10 +785,10 @@ private func checkActionWindowInnerRestore(ctx: ModeGuardContext) {
     if verified {
         ctx.innerLastSeenMode = snapshot.mode
         ctx.actionWindowRestored = true
-        ctx.guardLog("动作 \(snapshot.action) 后检测到分辨率被重置（\(modeDescription(snapshot.mode)) → \(observed)），已恢复到快照分辨率 \(modeDescription(snapshot.mode))，读回验证通过")
+        ctx.guardLog("\(actionLabel(snapshot.action))后检测到分辨率被重置（\(modeDescription(snapshot.mode)) → \(observed)），已恢复到快照分辨率 \(modeDescription(snapshot.mode))，读回验证通过")
     } else {
         let after = currentMode(snapshot.innerID).map(modeDescription) ?? "?"
-        ctx.guardLog("动作 \(snapshot.action) 后检测到分辨率被重置（\(modeDescription(snapshot.mode)) → \(observed)），已发出恢复请求，但读回仍是 \(after)，需人工核查")
+        ctx.guardLog("\(actionLabel(snapshot.action))后检测到分辨率被重置（\(modeDescription(snapshot.mode)) → \(observed)），已发出恢复请求，但读回仍是 \(after)，需人工核查")
     }
 }
 
@@ -839,7 +849,7 @@ private func verifyAndRestore(ctx: ModeGuardContext) {
             // 重挂未生效：不 return，继续分辨率校验（此时屏处于独立态，保住分辨率仍有意义）
             ctx.guardLog("检测到镜像解除（mirror_of=\(observed)），已发重挂但读回仍是 mirror_of=\(CGDisplayMirrorsDisplay(ctx.displayID) == kCGNullDirectDisplay ? "none" : String(CGDisplayMirrorsDisplay(ctx.displayID)))——重挂未生效，需人工核查")
         } else {
-            ctx.guardLog("镜像未确立（mirror_of=\(observed)，主屏=\(mainID)）——等待部署序列建立镜像基线，不动作")
+            ctx.guardLog("还没记下镜像关系（mirror_of=\(observed)，主屏=\(mainID)）——等启动序列把镜像挂上之后再守护，本轮不动作")
         }
     }
 
@@ -938,7 +948,7 @@ func startModeGuard(handle: VirtualDisplayHandle, logicalWidth: Int, logicalHeig
                 ctx.guardLog("--mirror-main：本屏即主屏（无内屏可镜像），忽略")
             } else if remirrorToMain(ctx: ctx, mainID: mainID) {
                 ctx.mirrorBaselineEstablished = true
-                ctx.guardLog("镜像基线已建立（启动参数 --mirror-main），mirror_of=\(mainID)")
+                ctx.guardLog("已记下镜像关系（mirror_of=\(mainID)）：之后镜像若被解除会自动重挂")
             } else {
                 ctx.guardLog("--mirror-main：镜像基线建立失败（读回 mirror_of 非主屏）——需人工 mirror-probe 建基线，基线确立前分辨率自动恢复不会重挂镜像")
             }
@@ -1250,7 +1260,7 @@ case "remove":
     // 不产生任何显示动作/重排，因此没有可观察的 3s 窗口；动作前快照仍落盘，
     // 保证「谁触发、动作前的快照分辨率是多少」可事后查证（真正的销毁动作=持有进程退出，同样没有观察窗口）。
     if let snapshot = captureInnerSnapshot(action: "remove") {
-        guardFileLog("动作 remove 前快照：内屏 id=\(snapshot.innerID) \(modeDescription(snapshot.mode))；跨进程无销毁能力，未产生显示动作，观察窗口不适用")
+        guardFileLog("销毁屏前快照：内屏 id=\(snapshot.innerID) \(modeDescription(snapshot.mode))；跨进程没有销毁能力，不会产生显示动作，观察窗口不适用")
     }
     // 跨进程销毁的结论（2026-11-07，参考源码 + 运行时内省 + 实验验证三方吻合）：
     //   · CGVirtualDisplay 的生命周期绑在创建它的进程上——实例释放（ARC 归零）或进程退出，WindowServer 即收屏；
