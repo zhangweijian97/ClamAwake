@@ -102,17 +102,17 @@ final class StatusBarController: NSObject {
         }
     }
 
-    /// 直接在状态栏按钮位置弹出菜单。
+    /// 在状态栏按钮正下方弹出菜单。
     /// 不用「临时挂 item.menu + performClick」的旧写法：performClick 会给按钮补一次合成点击，
     /// 造成一下点击闪两次；偶发还会因为 menu 挂载与当前事件时序错开而弹不出来。
+    /// 也不用 popUpContextMenu（锚点是鼠标）：改用 popUp 指定按钮左边缘，菜单左缘与图标左缘对齐。
     private func showMenu() {
         guard let button = statusItem?.button else { return }
         let menu = buildMenu()
-        if let event = NSApp.currentEvent {
-            NSMenu.popUpContextMenu(menu, with: event, for: button)
-        } else {
-            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height + 4), in: button)
-        }
+        // 显式指定外观：popUp 会继承状态栏按钮的 vibrancy（深色壁纸下菜单会跟着变暗），
+        // 菜单应跟随系统外观（浅色模式=浅色菜单）。
+        menu.appearance = NSApp.effectiveAppearance
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -2), in: button)
     }
 
     // MARK: - 保活开关（右键 + 菜单共用一条路径）
