@@ -102,13 +102,17 @@ final class StatusBarController: NSObject {
         }
     }
 
-    /// 临时挂上 menu 再 performClick 弹出（弹完摘掉，保持右键可分流）
+    /// 直接在状态栏按钮位置弹出菜单。
+    /// 不用「临时挂 item.menu + performClick」的旧写法：performClick 会给按钮补一次合成点击，
+    /// 造成一下点击闪两次；偶发还会因为 menu 挂载与当前事件时序错开而弹不出来。
     private func showMenu() {
-        guard let item = statusItem else { return }
+        guard let button = statusItem?.button else { return }
         let menu = buildMenu()
-        item.menu = menu
-        item.button?.performClick(nil)
-        item.menu = nil
+        if let event = NSApp.currentEvent {
+            NSMenu.popUpContextMenu(menu, with: event, for: button)
+        } else {
+            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height + 4), in: button)
+        }
     }
 
     // MARK: - 保活开关（右键 + 菜单共用一条路径）
