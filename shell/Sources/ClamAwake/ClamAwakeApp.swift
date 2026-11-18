@@ -77,7 +77,15 @@ final class StatusBarController: NSObject {
 
     private func refreshIcon() {
         guard let button = statusItem?.button else { return }
-        let symbol = engine.isProtecting ? "bolt.circle.fill" : "zzz"
+        // 三态：保活中=实心闪电，启动中=空心闪电（建屏那 0.25s 有系统卡顿，先给即时反馈），未保活=zzz
+        let symbol: String
+        if engine.isProtecting {
+            symbol = "bolt.circle.fill"
+        } else if case .starting = engine.phase {
+            symbol = "bolt.circle"
+        } else {
+            symbol = "zzz"
+        }
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "ClamAwake")
         image?.isTemplate = true
         button.image = image
