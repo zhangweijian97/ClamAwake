@@ -17,10 +17,12 @@ import Combine
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var signalSources: [DispatchSourceSignal] = []
     private let statusBar = StatusBarController()
+    private lazy var control = ControlPortServer(target: statusBar)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installSignalHandlers()
         statusBar.install()
+        _ = control.start()   // 命令行控制通道（app 未运行时的 CLI 会先用 open 拉起本 app）
         if UserDefaults.standard.bool(forKey: "resumeKeepAliveOnLaunch") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 EngineController.shared.start()
@@ -121,6 +123,68 @@ final class StatusBarController: NSObject {
             UserDefaults.standard.set(false, forKey: "resumeKeepAliveOnLaunch")
         }
         refreshIcon()
+    }
+
+    // MARK: - 命令行控制（CFMessagePort 回调，主线程）
+
+    /// 命令行命令 → 与菜单/右键完全相同的功能路径（返回状态文本）
+    func handle(controlCommand request: String) -> String {
+        switch request {
+        case "status":
+            return statusReport()
+        case "start":
+            setKeepAlive(true)
+            return statusReport()
+        case "stop":
+            setKeepAlive(false)
+            return statusReport()
+        case "toggle":
+            setKeepAlive(!keepAliveOn)
+            return statusReport()
+        case "login on":
+            login.enable()
+            return statusReport()
+        case "login off":
+            login.disable()
+            return statusReport()
+        case "sleepguard on":
+            sleepGuard.setEnabled(true)
+            return statusReport()
+        case "sleepguard off":
+            sleepGuard.setEnabled(false)
+            return statusReport()
+        case "quit":
+            DispatchQueue.main.async { NSApp.terminate(nil) }
+            return "bye"
+        default:
+            return "error=未知命令 \(request)"
+        }
+    }
+
+    /// 机器可读状态（CLI status / start --wait 消费）
+    private func statusReport() -> String {
+        sleepGuard.refresh()   // pmset 读数实时
+        login.syncStatus()
+        var lines: [String] = []
+        switch engine.phase {
+        case .stopped:
+            lines.append("phase=stopped")
+            lines.append("display_id=")
+        case .starting:
+            lines.append("phase=starting")
+            lines.append("display_id=")
+        case .running(let id):
+            lines.append("phase=running")
+            lines.append("display_id=\(id)")
+        case .failed(let message):
+            lines.append("phase=failed")
+            lines.append("display_id=")
+            lines.append("error=\(message.replacingOccurrences(of: "\n", with: " "))")
+        }
+        lines.append("protecting=\(engine.isProtecting ? "yes" : "no")")
+        lines.append("login=\(login.isEnabled ? "on" : "off")")
+        lines.append("sleep_guard=\(sleepGuard.isEnabled ? "on" : "off")")
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - 菜单（每次打开现算快照）

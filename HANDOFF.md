@@ -70,3 +70,12 @@ v0.3.3 已发布（GitHub Release + DMG，tag `v0.3.3`），修复 v0.3.1 起的
 - **本机已装**：`/Applications/ClamAwake.app` 为本改动构建，**版本号仍 0.3.3（未发版）**——发版时按发布链三处 bump 到 0.3.4，并同步 dsh-clamawake 插件内引擎（跨仓版本对齐）。
 - **实机验证（2026-11-18）**：左键菜单正常弹出且内容完整；右键开 → `vd-engine list` 出 `kya=yes mirror_of=1`（id=99）+ caffeinate/vd-engine 进程齐 + 图标变实心闪电；再右键关 → 虚拟屏消失、进程退出、`resumeKeepAliveOnLaunch=0`。
 
+
+## 2026-11-18 命令行控制通道（shell 改动，待发版 0.3.4）
+
+用户要求：功能要能命令行调用，不必点菜单栏图标（代理测试不抢鼠标）。设计与实测见 `设计/2026-11-18-菜单栏右键切换保活.md` 的「追加：命令行控制通道」。
+
+- **实现**：`shell/Sources/ClamAwake/Control.swift`——app 内 `ControlPortServer`（CFMessagePort `com.clamawake.app.control`，回调主线程）＋ CLI 侧 `ControlCLI`；命令分派进 `StatusBarController.handle(controlCommand:)`，与菜单/右键共用同一组方法，状态机单份。
+- **用法**：`/Applications/ClamAwake.app/Contents/MacOS/ClamAwake status|start [--wait]|stop|toggle|login on|off|sleepguard on|off|quit`；app 未运行时 CLI 自动 `open -a` 拉起（实测 0.43s 就绪）。输出为 `key=value` 行，`phase=failed` 退出码 1。
+- **无参数**仍是 GUI 菜单栏分支；`--selftest` 不变。
+- **卡顿读数**：命令行开保活 ≈ 0.25s（两段）、关 ≈ 0.06s；建/收显示器是 WindowServer 显示拓扑变更，换单模式/非 HiDPI 同量级，属机制固有成本（发版说明与 README 的 CLI 段落待发版时补）。
