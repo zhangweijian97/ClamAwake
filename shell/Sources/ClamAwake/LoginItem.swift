@@ -21,10 +21,15 @@ final class LoginItemManager: ObservableObject {
     }
 
     func refresh() {
+        syncStatus()
+        lastError = nil
+    }
+
+    /// 只同步系统状态、不清错误信息（菜单打开时用：系统设置里改过登录项也能反映出来）
+    func syncStatus() {
         let status = service.status
         isEnabled = (status == .enabled)
         needsApproval = (status == .requiresApproval)
-        lastError = nil
     }
 
     func enable() {

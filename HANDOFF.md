@@ -60,3 +60,13 @@ scripts/make-dmg.sh       # → dist/ClamAwake.dmg
 ## 当前上下文（2026-11-12）
 
 v0.3.3 已发布（GitHub Release + DMG，tag `v0.3.3`），修复 v0.3.1 起的护档失明回归；本机 `/Applications` 已装 0.3.3（引擎 pid 786），两轮真实合盖验证「模式正常 1800x1169」。v0.3.1 / v0.3.2 的 Release 页已标注 Known Issues。
+
+## 2026-11-18 菜单栏右键切换保活（shell 改动，待发版 0.3.4）
+
+用户需求：左键单击保持开菜单，右键单击作隐藏快捷键直接切换保活。实施单：`设计/2026-11-18-菜单栏右键切换保活.md`。
+
+- **架构变化**：菜单栏壳从 SwiftUI `MenuBarExtra` 改为 AppKit `NSStatusItem` + `NSMenu`——MenuBarExtra 把左右键都接到开菜单，挂不了右键行为。菜单内容逐项复刻（状态段/保活开关/开机自启/登录项待批准/系统级防睡/退出/版本号），每次打开现算快照（pmset 读数与登录项状态实时刷新）。
+- **行为**：右键＝切换保活；启动中再按＝取消这次启动。与菜单按钮共用 `setKeepAlive`，同样写 `resumeKeepAliveOnLaunch`。图标沿用 bolt.circle.fill / zzz，切换即变。
+- **本机已装**：`/Applications/ClamAwake.app` 为本改动构建，**版本号仍 0.3.3（未发版）**——发版时按发布链三处 bump 到 0.3.4，并同步 dsh-clamawake 插件内引擎（跨仓版本对齐）。
+- **实机验证（2026-11-18）**：左键菜单正常弹出且内容完整；右键开 → `vd-engine list` 出 `kya=yes mirror_of=1`（id=99）+ caffeinate/vd-engine 进程齐 + 图标变实心闪电；再右键关 → 虚拟屏消失、进程退出、`resumeKeepAliveOnLaunch=0`。
+

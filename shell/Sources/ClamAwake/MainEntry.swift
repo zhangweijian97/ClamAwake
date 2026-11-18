@@ -2,9 +2,9 @@
 // GPL-3.0，见仓库 LICENSE
 //
 // --selftest：无 GUI 的引擎宿主自检（spawn vd-engine → 建屏 → 停止 → 屏消失），
-// 供构建后机器验证用；正常双击 / open 启动走 SwiftUI 菜单栏分支。
+// 供构建后机器验证用；正常双击 / open 启动走 AppKit 菜单栏分支（NSStatusItem + NSMenu）。
 
-import SwiftUI
+import AppKit
 
 @main
 struct ClamAwakeEntry {
@@ -13,6 +13,10 @@ struct ClamAwakeEntry {
             EngineSelfTest.run()
             return
         }
-        ClamAwakeApp.main()
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        app.setActivationPolicy(.accessory)
+        app.run()
     }
 }
