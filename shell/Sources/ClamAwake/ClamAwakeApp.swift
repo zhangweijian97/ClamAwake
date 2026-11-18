@@ -248,7 +248,7 @@ final class StatusBarController: NSObject {
         let quit = NSMenuItem(title: "退出 ClamAwake", action: #selector(quitApp), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
-        menu.addItem(caption("ClamAwake v0.3.3"))
+        menu.addItem(caption("ClamAwake v0.3.4"))
         return menu
     }
 

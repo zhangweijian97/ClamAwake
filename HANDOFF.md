@@ -61,21 +61,21 @@ scripts/make-dmg.sh       # → dist/ClamAwake.dmg
 
 v0.3.3 已发布（GitHub Release + DMG，tag `v0.3.3`），修复 v0.3.1 起的护档失明回归；本机 `/Applications` 已装 0.3.3（引擎 pid 786），两轮真实合盖验证「模式正常 1800x1169」。v0.3.1 / v0.3.2 的 Release 页已标注 Known Issues。
 
-## 2026-11-18 菜单栏右键切换保活（shell 改动，待发版 0.3.4）
+## 2026-11-18 菜单栏右键切换保活 + 命令行通道（已发版 0.3.4）
 
 用户需求：左键单击保持开菜单，右键单击作隐藏快捷键直接切换保活。实施单：`设计/2026-11-18-菜单栏右键切换保活.md`。
 
 - **架构变化**：菜单栏壳从 SwiftUI `MenuBarExtra` 改为 AppKit `NSStatusItem` + `NSMenu`——MenuBarExtra 把左右键都接到开菜单，挂不了右键行为。菜单内容逐项复刻（状态段/保活开关/开机自启/登录项待批准/系统级防睡/退出/版本号），每次打开现算快照（pmset 读数与登录项状态实时刷新）。
 - **行为**：右键＝切换保活；启动中再按＝取消这次启动。与菜单按钮共用 `setKeepAlive`，同样写 `resumeKeepAliveOnLaunch`。图标沿用 bolt.circle.fill / zzz，切换即变。
-- **本机已装**：`/Applications/ClamAwake.app` 为本改动构建，**版本号仍 0.3.3（未发版）**——发版时按发布链三处 bump 到 0.3.4，并同步 dsh-clamawake 插件内引擎（跨仓版本对齐）。
+- **发版**：0.3.4（GitHub Release v0.3.4，含 DMG；应用/引擎/CFBundleVersion 三处同步 bump：0.3.4 / 0.3.4 / 5）。`dsh-clamawake` 插件内引擎仍是 0.3.3，下次插件发版时按 `scripts/build-engine.sh` 重建同步即可（插件只核对自身包内指纹，不影响运行）。
 - **实机验证（2026-11-18）**：左键菜单正常弹出且内容完整；右键开 → `vd-engine list` 出 `kya=yes mirror_of=1`（id=99）+ caffeinate/vd-engine 进程齐 + 图标变实心闪电；再右键关 → 虚拟屏消失、进程退出、`resumeKeepAliveOnLaunch=0`。
 
 
-## 2026-11-18 命令行控制通道（shell 改动，待发版 0.3.4）
+## 2026-11-18 命令行控制通道（已发版 0.3.4）
 
 用户要求：功能要能命令行调用，不必点菜单栏图标（代理测试不抢鼠标）。设计与实测见 `设计/2026-11-18-菜单栏右键切换保活.md` 的「追加：命令行控制通道」。
 
 - **实现**：`shell/Sources/ClamAwake/Control.swift`——app 内 `ControlPortServer`（CFMessagePort `com.clamawake.app.control`，回调主线程）＋ CLI 侧 `ControlCLI`；命令分派进 `StatusBarController.handle(controlCommand:)`，与菜单/右键共用同一组方法，状态机单份。
 - **用法**：`/Applications/ClamAwake.app/Contents/MacOS/ClamAwake status|start [--wait]|stop|toggle|login on|off|sleepguard on|off|quit`；app 未运行时 CLI 自动 `open -a` 拉起（实测 0.43s 就绪）。输出为 `key=value` 行，`phase=failed` 退出码 1。
 - **无参数**仍是 GUI 菜单栏分支；`--selftest` 不变。
-- **卡顿读数**：命令行开保活 ≈ 0.25s（两段）、关 ≈ 0.06s；建/收显示器是 WindowServer 显示拓扑变更，换单模式/非 HiDPI 同量级，属机制固有成本（发版说明与 README 的 CLI 段落待发版时补）。
+- **卡顿读数**：命令行开保活 ≈ 0.25s（两段）、关 ≈ 0.06s；建/收显示器是 WindowServer 显示拓扑变更，换单模式/非 HiDPI 同量级，属机制固有成本（README 的中英「应用自带命令行」段已补，发版说明同步）。
