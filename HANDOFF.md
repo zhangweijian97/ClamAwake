@@ -98,3 +98,12 @@ launchd 那一支没落地也无需落地——同一条用户价值（重启后
 项目内正本副本 `deploy/com.clamawake.vd-engine.plist` 原样保留。实施单顶部已加状态注记，避免后来者照单执行拉起第二个旧引擎。
 回滚（若将来要回到纯 launchd 形态）：先关 app 侧保活（避免两个引擎争同一虚拟屏），再把缓冲里的 plist 拷回
 `~/Library/LaunchAgents/` 并 `launchctl bootstrap gui/$(id -u) <plist>`；同时把 plist 的 ProgramArguments 指向**当前版本**的引擎。
+
+## 2026-11-21 v0.3.5：保活与系统级防睡合并为单开关（已装机验证）
+
+用户需求：两个功能合并到一个开关——只防睡不镜像会出现「合盖屏幕还亮着」，不可接受。实施单：`设计/2026-11-21-保活与系统防睡合并单开关.md`（goal-141d32）。
+
+- **语义**：开保活 = engine.start()（虚拟屏镜像+caffeinate）+ pmset 禁睡（已是 1 免弹窗）；关保活 = engine.stop() + 防睡自动回收（phase 观察统一触发，覆盖主动关/引擎意外死/启动失败三路，变化沿 starting|running→stopped|failed）。
+- **防睡单独入口全删**（菜单项、CLI `sleepguard on|off`）；矛盾态（防睡仍开+保活已停）菜单警告行 +「恢复系统睡眠默认」项（唯一剩余的单独关出口）。`SleepGuard.setEnabled` 加 no-op 与 pendingTarget 接续（堵 osascript 飞行中回收被 isApplying 吞的窗口）。
+- **实弹验证（2026-11-21）**：stop → 拆屏即时、授权后 SleepDisabled=0；start --wait → 建屏 display_id=123、授权后 SleepDisabled=1、引擎读数 mirror_of=1。装机位 /Applications 已是 0.3.5。
+- 未发版（GitHub Release/DMG 待发）：bump/构建/冒烟/实机验证已过，发版动作见「发布」节动作序第 4 步起。
