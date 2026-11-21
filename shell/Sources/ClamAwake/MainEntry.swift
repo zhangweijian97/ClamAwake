@@ -3,7 +3,7 @@
 //
 // 三种入口：
 //   · --selftest   无 GUI 的引擎宿主自检（spawn vd-engine → 建屏 → 停止 → 屏消失），构建后机器验证用
-//   · 命令参数     命令行控制（status/start/stop/toggle/login/sleepguard/quit），走与菜单同一组方法
+//   · 命令参数     命令行控制（status/start/stop/toggle/login/quit），走与菜单同一组方法
 //   · 无参数       AppKit 菜单栏分支（NSStatusItem + NSMenu），双击 / open 启动走这里
 
 import AppKit
