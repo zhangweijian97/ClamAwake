@@ -79,3 +79,22 @@ v0.3.3 已发布（GitHub Release + DMG，tag `v0.3.3`），修复 v0.3.1 起的
 - **用法**：`/Applications/ClamAwake.app/Contents/MacOS/ClamAwake status|start [--wait]|stop|toggle|login on|off|sleepguard on|off|quit`；app 未运行时 CLI 自动 `open -a` 拉起（实测 0.43s 就绪）。输出为 `key=value` 行，`phase=failed` 退出码 1。
 - **无参数**仍是 GUI 菜单栏分支；`--selftest` 不变。
 - **卡顿读数**：命令行开保活 ≈ 0.25s（两段）、关 ≈ 0.06s；建/收显示器是 WindowServer 显示拓扑变更，换单模式/非 HiDPI 同量级，属机制固有成本（README 的中英「应用自带命令行」段已补，发版说明同步）。
+
+## 2026-11-21 launchd 常驻方案判读：已被 app 形态取代（plist 移出运行位）
+
+由来：`launchd-health-check` 自 2026-11-09 起每日报「未注册 2 项」，其中一件是本项目的
+`com.clamawake.vd-engine`。当次核实的四条读数：
+
+1. `/Applications/ClamAwake.app` 是登录项且 enabled（System Events 读 `path=/Applications/ClamAwake.app`）；
+2. 在跑引擎来自 app 包内 —— `ps` 显示 `/Applications/ClamAwake.app/Contents/Resources/vd-engine create 1800 1169 --hidpi --hold --mirror-main`，`vd-engine version` = **0.3.4**；
+3. `~/Library/LaunchAgents/com.clamawake.vd-engine.plist` 指向项目 `构建/vd-engine`（2026-11-08 19:11 构建），该二进制**不支持 `version` 子命令**（实测「未知子命令」）——比包内引擎旧；而 `vd-engine version` 正是应用/插件跨通道对账的机器读数；
+4. plist 指定的 `/tmp/vd-prod.out`、`/tmp/vd-prod.err` 不存在 → 该 label 从未实际跑起来。
+
+判读：这是 2026-11-08 那份实施单（`设计/f8e4a9-launchd常驻实施单-20261108.md`）的旧方案遗留，
+产品后来走的形态是「app 自带登录项 + `resumeKeepAliveOnLaunch` + 命令行控制通道」（0.3.4），
+launchd 那一支没落地也无需落地——同一条用户价值（重启后 AI 画布自动回来）已由登录项 + app 内建恢复承接。
+
+处置：把运行位 plist 移入 `~/个人成长系统/_最近删除/launchd-未注册-plist-20261121/`（同目录 README 记判读与回滚）；
+项目内正本副本 `deploy/com.clamawake.vd-engine.plist` 原样保留。实施单顶部已加状态注记，避免后来者照单执行拉起第二个旧引擎。
+回滚（若将来要回到纯 launchd 形态）：先关 app 侧保活（避免两个引擎争同一虚拟屏），再把缓冲里的 plist 拷回
+`~/Library/LaunchAgents/` 并 `launchctl bootstrap gui/$(id -u) <plist>`；同时把 plist 的 ProgramArguments 指向**当前版本**的引擎。
