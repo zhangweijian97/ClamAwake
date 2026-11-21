@@ -7,7 +7,7 @@
 // 架构：app 进程注册一个本地 CFMessagePort（名字 com.clamawake.app.control），
 // 命令行进程发一条命令字符串、同步拿回状态文本。app 不在运行时，CLI 可选先 open 拉起。
 //
-// 命令：status / start / stop / toggle / login on|off / sleepguard on|off / quit
+// 命令：status / start / stop / toggle / login on|off / quit
 
 import Foundation
 
@@ -76,7 +76,6 @@ enum ControlCLI {
       stop                  停止保活
       toggle                切换保活（同鼠标右键）
       login on|off          开机自启
-      sleepguard on|off     系统级防睡（会弹管理员授权窗）
       quit                  退出 app
     说明：命令发给正在运行的 ClamAwake.app；未运行时自动先拉起（除 quit 外）。
     """
@@ -91,7 +90,7 @@ enum ControlCLI {
         case "start", "stop", "toggle":
             command = first
             wait = args.contains("--wait")
-        case "login", "sleepguard":
+        case "login":
             guard args.count >= 2, ["on", "off"].contains(args[1]) else {
                 FileHandle.standardError.write(Data((usageText + "\n").utf8))
                 return 2

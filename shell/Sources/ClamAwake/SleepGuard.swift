@@ -41,9 +41,19 @@ final class SleepGuardManager: ObservableObject {
         return false
     }
 
-    /// 开/关系统级防睡（会弹管理员授权窗；用户取消 → 报错、状态不变）
+    /// 开/关系统级防睡（会弹管理员授权窗；用户取消 → 报错、状态不变）。
+    /// 已是目标值 → no-op（pmset 是持久设置，值没变就不弹窗）；
+    /// isApplying 中收到新请求 → 记入 pendingTarget，当前写入完成后紧接着执行
+    /// （堵「开保活的 osascript 飞行中引擎失败，回收调用被 isApplying 吞掉」的窗口）。
+    private var pendingTarget: Bool?
+
     func setEnabled(_ on: Bool) {
-        guard !isApplying else { return }
+        if isApplying {
+            pendingTarget = on
+            return
+        }
+        refresh()
+        if isEnabled == on { return }
         isApplying = true
         lastError = nil
         let cmd = on ? "pmset -a disablesleep 1" : "pmset -a disablesleep 0"
@@ -57,6 +67,12 @@ final class SleepGuardManager: ObservableObject {
                 self.isApplying = false
                 if let message = result.1 { self.lastError = message }
                 self.refresh()
+                if let pending = self.pendingTarget {
+                    self.pendingTarget = nil
+                    if self.isEnabled != pending {
+                        self.setEnabled(pending)
+                    }
+                }
             }
         }
     }

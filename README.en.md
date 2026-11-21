@@ -23,7 +23,7 @@ Three steps:
 Click the menu bar icon → "Start Keep-Alive", done. From then on, closing the lid: the machine keeps running your tasks while the screen stays off. Click "Stop Keep-Alive" or quit the app to restore.
 
 - **Right-click the menu bar icon** to start/stop keep-alive directly (hidden shortcut; left-click still opens the menu);
-- First start pops a one-time admin authorization (system-level sleep guard; one approval lasts forever — no terminal needed at any point);
+- Starting keep-alive pops one admin authorization (it also disables system sleep, taking effect together with the virtual display mirror); stopping keep-alive pops one more to restore system sleep to its default; when the system is already in the target state, no prompt appears again. No terminal needed at any point.
 - For auto-start: enable "Launch at Login" in the menu;
 - To uninstall: quit the app, then move ClamAwake from Applications to the Trash. No leftovers.
 
@@ -49,7 +49,6 @@ The menu bar app itself can be driven from the command line: commands are sent t
 /Applications/ClamAwake.app/Contents/MacOS/ClamAwake stop
 /Applications/ClamAwake.app/Contents/MacOS/ClamAwake toggle      # same as right-click
 /Applications/ClamAwake.app/Contents/MacOS/ClamAwake login on|off
-/Applications/ClamAwake.app/Contents/MacOS/ClamAwake sleepguard on|off
 ```
 
 If the app is not running, every command except `quit` launches it first (`open -b com.clamawake.app`). Output is `key=value` lines, easy to consume from scripts.

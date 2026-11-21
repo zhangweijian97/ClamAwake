@@ -23,7 +23,7 @@ ClamAwake 的做法：给系统接一块自建的虚拟屏，合盖后由虚拟�
 点菜单栏图标 →「开启保活」，完成。之后合盖：机器继续跑任务，屏幕熄灭；点「停止保活」或退出应用即恢复原状。
 
 - **右键单击菜单栏图标**：直接开启 / 停止保活（隐藏快捷键，不进菜单；左键仍是打开菜单）；
-- 首次开启会弹一次管理员授权（系统级防睡眠设置，一次授权长期生效，全程不需要打开终端）；
+- 开启保活会弹一次管理员授权（同时禁用系统睡眠，与虚拟屏镜像一起生效）；停止保活时会再弹一次把系统睡眠恢复默认；系统已是目标状态时不重复弹窗。全程不需要打开终端。
 - 想开机自启：菜单里勾选「登录时启动」；
 - 卸载：退出应用后，把 ClamAwake 从「应用程序」拖进废纸篓即可，无残留。
 
@@ -49,7 +49,6 @@ ClamAwake 的做法：给系统接一块自建的虚拟屏，合盖后由虚拟�
 /Applications/ClamAwake.app/Contents/MacOS/ClamAwake stop
 /Applications/ClamAwake.app/Contents/MacOS/ClamAwake toggle      # 同右键
 /Applications/ClamAwake.app/Contents/MacOS/ClamAwake login on|off
-/Applications/ClamAwake.app/Contents/MacOS/ClamAwake sleepguard on|off
 ```
 
 app 没在运行时，除 `quit` 外的命令会先用 `open -b com.clamawake.app` 拉起它再执行；输出是 `key=value` 行，可直接给脚本消费。

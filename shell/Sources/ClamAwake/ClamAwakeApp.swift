@@ -7,7 +7,7 @@
 // 鼠标语义（0.3.4）：左键单击 = 打开菜单（内容与原 SwiftUI 菜单一致）；
 // 右键单击 = 直接切换保活（隐藏快捷键，不进菜单）。
 //
-// 菜单结构：状态段 → 保活开关 → 开机自启（SMAppService）→ 系统级防睡（pmset，管理员授权）→ 退出。
+// 菜单结构：状态段 → 保活开关（合并系统防睡：开=虚拟屏镜像+caffeinate+pmset 禁睡一起，关=一起撤）→ 开机自启（SMAppService）→ 退出。
 // 状态持久化：保活开着时退出 app（例如合盖前误退），下次启动自动恢复保活（resumeKeepAliveOnLaunch）。
 // 托盘图标：保活中 = bolt.circle.fill（实心），未保活 = zzz（一眼可辨状态）。
 
@@ -72,6 +72,34 @@ final class StatusBarController: NSObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.refreshIcon() }
             .store(in: &cancellables)
+
+        // 合并开关的关侧：保活一旦停了（用户主动关 / 引擎意外死亡 / 启动失败），
+        // 系统级防睡必须跟着撤——防睡单独残留 = 合盖不睡且内屏背光保持亮（不可接受状态）。
+        // 只看变化沿（starting/running → stopped/failed），app 启动时的初始 .stopped 不触发
+        // （存量矛盾态只走菜单警告行，避免开机自动弹管理员授权窗）。
+        var lastPhase: EngineController.Phase = .stopped
+        engine.$phase
+            .receive(on: RunLoop.main)
+            .sink { [weak self] phase in
+                let wasActive: Bool
+                switch lastPhase {
+                case .starting, .running: wasActive = true
+                default: wasActive = false
+                }
+                let nowInactive: Bool
+                switch phase {
+                case .stopped, .failed: nowInactive = true
+                default: nowInactive = false
+                }
+                lastPhase = phase
+                if wasActive && nowInactive {
+                    self?.sleepGuard.refresh()
+                    if self?.sleepGuard.isEnabled == true {
+                        self?.sleepGuard.setEnabled(false)
+                    }
+                }
+            }
+            .store(in: &cancellables)
         refreshIcon()
     }
 
@@ -129,9 +157,10 @@ final class StatusBarController: NSObject {
     private func setKeepAlive(_ on: Bool) {
         if on {
             engine.start()
+            sleepGuard.setEnabled(true)   // 合并开关：开保活同时禁系统睡眠（已是 1 则免弹窗）
             UserDefaults.standard.set(true, forKey: "resumeKeepAliveOnLaunch")
         } else {
-            engine.stop()
+            engine.stop()   // 防睡回收由 observeEnginePhase 的 phase 观察统一触发
             UserDefaults.standard.set(false, forKey: "resumeKeepAliveOnLaunch")
         }
         refreshIcon()
@@ -158,12 +187,6 @@ final class StatusBarController: NSObject {
             return statusReport()
         case "login off":
             login.disable()
-            return statusReport()
-        case "sleepguard on":
-            sleepGuard.setEnabled(true)
-            return statusReport()
-        case "sleepguard off":
-            sleepGuard.setEnabled(false)
             return statusReport()
         case "quit":
             DispatchQueue.main.async { NSApp.terminate(nil) }
@@ -235,20 +258,22 @@ final class StatusBarController: NSObject {
             menu.addItem(approval)
         }
 
-        let sleep = NSMenuItem(title: "系统级防睡（部分机型合盖仍入睡时用）",
-                               action: #selector(toggleSleepGuardItem), keyEquivalent: "")
-        sleep.target = self
-        sleep.state = sleepGuard.isEnabled ? .on : .off
-        sleep.isEnabled = !sleepGuard.isApplying
-        menu.addItem(sleep)
-        if sleepGuard.isApplying { menu.addItem(caption("等待管理员确认…")) }
+        // 矛盾态兜底：防睡仍开而保活已停（关保活时授权被取消/失败）——合盖屏幕会亮，给显眼警告与恢复出口
+        if sleepGuard.isEnabled && !keepAliveOn {
+            menu.addItem(caption("⚠ 系统防睡仍开着而保活已停：合盖屏幕会亮着"))
+            let unstick = NSMenuItem(title: "恢复系统睡眠默认", action: #selector(disableSleepGuard), keyEquivalent: "")
+            unstick.target = self
+            unstick.isEnabled = !sleepGuard.isApplying
+            menu.addItem(unstick)
+            if sleepGuard.isApplying { menu.addItem(caption("等待管理员确认…")) }
+        }
 
         menu.addItem(.separator())
 
         let quit = NSMenuItem(title: "退出 ClamAwake", action: #selector(quitApp), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
-        menu.addItem(caption("ClamAwake v0.3.4"))
+        menu.addItem(caption("ClamAwake v0.3.5"))
         return menu
     }
 
@@ -295,8 +320,9 @@ final class StatusBarController: NSObject {
         NSWorkspace.shared.open(LoginItemManager.loginItemsSettingsURL)
     }
 
-    @objc private func toggleSleepGuardItem() {
-        sleepGuard.setEnabled(!sleepGuard.isEnabled)
+    /// 矛盾态恢复出口：单独关闭系统级防睡（只在防睡仍开而保活已停时出现在菜单里）
+    @objc private func disableSleepGuard() {
+        sleepGuard.setEnabled(false)
     }
 
     @objc private func quitApp() {
