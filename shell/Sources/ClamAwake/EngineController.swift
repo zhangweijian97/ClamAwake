@@ -200,12 +200,17 @@ final class EngineController: ObservableObject {
         }
         switch phase {
         case .starting:
+            // 启动失败：caffeinate 同步清理，不留半启动残件
+            if let p = caffeinateProcess { gracefulTerminate(p) }
+            caffeinateProcess = nil
             let excerpt = stderrExcerpt(600)
             phase = .failed(message: excerpt.isEmpty
                 ? "引擎在建屏确认前就退出了（建屏失败；重启 app 可重试）"
                 : "引擎退出：\(excerpt)")
         default:
-            // 意外退出：屏随引擎进程一起消失，状态回落到已停止
+            // 意外退出：屏随引擎进程一起消失，状态回落到已停止；caffeinate 连带清理（否则孤儿断言常驻）
+            if let p = caffeinateProcess { gracefulTerminate(p) }
+            caffeinateProcess = nil
             phase = .stopped
         }
     }

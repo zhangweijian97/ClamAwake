@@ -7,7 +7,7 @@
 // 架构：app 进程注册一个本地 CFMessagePort（名字 com.clamawake.app.control），
 // 命令行进程发一条命令字符串、同步拿回状态文本。app 不在运行时，CLI 可选先 open 拉起。
 //
-// 命令：status / start / stop / toggle / login on|off / mode normal|power / quit
+// 命令：status / start / stop / toggle / login on|off / mode plugged|battery / quit
 
 import Foundation
 
@@ -71,12 +71,12 @@ enum ControlClient {
 enum ControlCLI {
     static let usageText = """
     用法: ClamAwake <命令>
-      status                打印当前状态（phase/protecting/display_id/login/sleep_guard/mode）
+      status                打印当前状态（phase/protecting/display_id/login/sleep_guard/mode/power）
       start [--wait]        开启保活（--wait 等到建屏完成或失败再返回）
       stop                  停止保活
       toggle                切换保活（同鼠标右键）
       login on|off          开机自启
-      mode normal|power     保活模式（普通=零密码；强力=加系统级禁睡）
+      mode plugged|battery  保活档位（插电=零密码；电池=加系统级禁睡常驻）
       quit                  退出 app
     说明：命令发给正在运行的 ClamAwake.app；未运行时自动先拉起（除 quit 外）。
     """
@@ -98,11 +98,19 @@ enum ControlCLI {
             }
             command = "\(first) \(args[1])"
         case "mode":
-            guard args.count >= 2, ["normal", "power"].contains(args[1]) else {
+            guard args.count >= 2 else {
                 FileHandle.standardError.write(Data((usageText + "\n").utf8))
                 return 2
             }
-            command = "mode \(args[1])"
+            let target: String
+            switch args[1] {
+            case "plugged", "normal": target = "plugged"   // 0.3.6 旧值迁移
+            case "battery", "power": target = "battery"    // 0.3.6 旧值迁移
+            default:
+                FileHandle.standardError.write(Data((usageText + "\n").utf8))
+                return 2
+            }
+            command = "mode \(target)"
         case "quit":
             command = "quit"
         case "help", "-h", "--help":

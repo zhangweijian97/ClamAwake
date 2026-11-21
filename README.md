@@ -23,10 +23,10 @@ ClamAwake 的做法：给系统接一块自建的虚拟屏，合盖后由虚拟�
 点菜单栏图标 →「开启保活」，完成。之后合盖：机器继续跑任务，屏幕熄灭；点「停止保活」或退出应用即恢复原状。
 
 - **右键单击菜单栏图标**：直接开启 / 停止保活（隐藏快捷键，不进菜单；左键仍是打开菜单）；
-- **保活模式**：菜单里有「保活模式」一项，默认**普通模式**，零密码；机型合盖仍会入睡时，点按切到**强力模式**；
-- 授权行为随模式不同：普通模式全程不弹授权窗（虚拟屏镜像 + caffeinate 断言随开关生灭，结构上无残留）；强力模式额外做系统级禁睡（pmset），开、关保活时各弹一次管理员密码，系统已是目标状态时不重复弹窗。全程不需要打开终端。
+- **保活档位**：菜单里有「保活档位」两项，默认**插电档**，零密码；用电池合盖保活时，切到**电池档**（换档时授权一次，系统级禁睡常驻，直到切回插电档）；
+- 授权行为随档位不同：插电档全程不弹授权窗（虚拟屏镜像 + caffeinate 断言随开关生灭，结构上无残留），开/关保活零密码；电池档在**切换档位**时各弹一次管理员密码（切到电池档拉起系统级禁睡，切回插电档撤销），系统已是目标状态时不重复弹窗，此后开/关保活同样零密码。全程不需要打开终端。
 - 想开机自启：菜单里勾选「登录时启动」；
-- 卸载：退出应用后，把 ClamAwake 从「应用程序」拖进废纸篓即可，无残留。
+- 卸载：退出应用后，把 ClamAwake 从「应用程序」拖进废纸篓即可，无残留。若在电池档，卸载前先切回插电档（撤销系统级禁睡），或手动执行 `sudo pmset -a disablesleep 0`。
 
 > 当前 DMG 为免签分发（ad-hoc 签名），所以首次打开需要第 3 步的右键操作；正式签名公证后会省去这一步。
 
@@ -45,12 +45,12 @@ ClamAwake 的做法：给系统接一块自建的虚拟屏，合盖后由虚拟�
 菜单栏应用本身也能被命令行驱动：命令发给正在运行的 app，走的是与菜单、右键完全相同的那条路径，开关状态与图标同步，不会出现两套保活。
 
 ```sh
-/Applications/ClamAwake.app/Contents/MacOS/ClamAwake status      # phase / display_id / protecting / login / sleep_guard / mode
+/Applications/ClamAwake.app/Contents/MacOS/ClamAwake status      # phase / display_id / protecting / login / sleep_guard / mode / power
 /Applications/ClamAwake.app/Contents/MacOS/ClamAwake start --wait # 开保活，等到建屏完成或失败
 /Applications/ClamAwake.app/Contents/MacOS/ClamAwake stop
 /Applications/ClamAwake.app/Contents/MacOS/ClamAwake toggle      # 同右键
 /Applications/ClamAwake.app/Contents/MacOS/ClamAwake login on|off
-/Applications/ClamAwake.app/Contents/MacOS/ClamAwake mode normal|power   # 保活模式：普通=零密码；强力=加系统级禁睡（pmset）
+/Applications/ClamAwake.app/Contents/MacOS/ClamAwake mode plugged|battery   # 保活档位：插电=零密码；电池=加系统级禁睡常驻（pmset）
 ```
 
 app 没在运行时，除 `quit` 外的命令会先用 `open -b com.clamawake.app` 拉起它再执行；输出是 `key=value` 行，可直接给脚本消费。
@@ -265,6 +265,10 @@ kill -TERM "$ENGINE_PID"
 合盖侧配合 `caffeinate -d` 显示断言（完整配方见上文）。另外，若你的机型合盖后仍会入睡，需要系统级禁睡：`pmset` 的 `SleepDisabled` 项（需 sudo），工具不代用户设置。`vd-engine doctor` 会读这一项，未禁睡时给出确切命令（见[快速上手](#快速上手命令行)）。
 
 ## 故障排查
+
+### 合盖后机器还是睡了？
+
+你在用电池——切电池档（插电档在电池下挡不住合盖睡眠，这是 macOS 的电源策略：合盖唤醒模式需要接电源）。
 
 ### 引擎启动失败（create 退出 1）
 
