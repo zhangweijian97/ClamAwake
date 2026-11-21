@@ -164,12 +164,12 @@ final class StatusBarController: NSObject {
 
     // MARK: - 保活开关（右键 + 菜单共用一条路径）
 
-    // 档位持久化（UserDefaults key=keepAliveMode；缺省插电档；迁移 0.3.6 旧值 normal/power）
+    // 档位持久化（UserDefaults key=keepAliveMode；缺省电池档——首要用户=移动携带；迁移 0.3.6 旧值 normal/power）
     private var keepAliveMode: KeepAliveMode {
         get {
             switch UserDefaults.standard.string(forKey: "keepAliveMode") {
-            case "battery", "power": return .battery
-            default: return .plugged
+            case "plugged", "normal": return .plugged
+            default: return .battery   // battery/power/缺省都归电池档（0.3.7 收尾批：首要用户=移动携带）
             }
         }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "keepAliveMode") }
@@ -187,6 +187,14 @@ final class StatusBarController: NSObject {
     private func setKeepAlive(_ on: Bool) {
         if on {
             engine.start()
+            // 电池档完整性：保活开着承诺「合盖必不睡」，闸缺失时兑现不了——补拉（新用户首次开保活弹一次授权，
+            // 此后闸常驻、开关零密码）。resume 路径不补：pmset 持久，正常场景闸在；异常场景菜单状态行可见。
+            if keepAliveMode == .battery {
+                sleepGuard.refresh()
+                if !sleepGuard.isEnabled {
+                    sleepGuard.setEnabled(true)
+                }
+            }
             UserDefaults.standard.set(true, forKey: "resumeKeepAliveOnLaunch")
         } else {
             engine.stop()
@@ -300,12 +308,12 @@ final class StatusBarController: NSObject {
         keep.target = self
         menu.addItem(keep)
         menu.addItem(caption("保活档位"))
-        let pluggedItem = NSMenuItem(title: "插电——合盖保活，零密码",
+        let pluggedItem = NSMenuItem(title: "插电——电脑不挪窝，零密码不动系统设置",
                                      action: #selector(choosePluggedMode), keyEquivalent: "")
         pluggedItem.target = self
         pluggedItem.state = keepAliveMode == .plugged ? .on : .off
         menu.addItem(pluggedItem)
-        let batteryItem = NSMenuItem(title: "电池——加系统级禁睡，换档授权一次",
+        let batteryItem = NSMenuItem(title: "电池——带着电脑走，合盖必不睡（授权一次）",
                                      action: #selector(chooseBatteryMode), keyEquivalent: "")
         batteryItem.target = self
         batteryItem.state = keepAliveMode == .battery ? .on : .off
