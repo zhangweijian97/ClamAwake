@@ -7,9 +7,15 @@
 // 鼠标语义（0.3.4）：左键单击 = 打开菜单（内容与原 SwiftUI 菜单一致）；
 // 右键单击 = 直接切换保活（隐藏快捷键，不进菜单）。
 //
-// 菜单结构：状态段 → 保活开关（合并系统防睡：开=虚拟屏镜像+caffeinate+pmset 禁睡一起，关=一起撤）→ 开机自启（SMAppService）→ 退出。
+// 菜单结构：状态段 → 保活开关（含模式档：普通零密码/强力加 pmset）→ 开机自启（SMAppService）→ 退出。
 // 状态持久化：保活开着时退出 app（例如合盖前误退），下次启动自动恢复保活（resumeKeepAliveOnLaunch）。
 // 托盘图标：保活中 = bolt.circle.fill（实心），未保活 = zzz（一眼可辨状态）。
+
+/// 保活模式（0.3.6 双模式）：普通=镜像+断言零密码；强力=普通+pmset 全覆盖（开/关各弹一次授权）
+enum KeepAliveMode: String {
+    case normal
+    case power
+}
 
 import AppKit
 import Combine
@@ -145,6 +151,12 @@ final class StatusBarController: NSObject {
 
     // MARK: - 保活开关（右键 + 菜单共用一条路径）
 
+    // 模式持久化（UserDefaults key=keepAliveMode，缺省 normal）
+    private var keepAliveMode: KeepAliveMode {
+        get { KeepAliveMode(rawValue: UserDefaults.standard.string(forKey: "keepAliveMode") ?? "") ?? .normal }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "keepAliveMode") }
+    }
+
     /// 启动中视作「已开」：右键此时按下 = 取消这次启动，而不是叠一次 start
     private var keepAliveOn: Bool {
         engine.isProtecting || engine.phase == .starting
@@ -157,10 +169,12 @@ final class StatusBarController: NSObject {
     private func setKeepAlive(_ on: Bool) {
         if on {
             engine.start()
-            sleepGuard.setEnabled(true)   // 合并开关：开保活同时禁系统睡眠（已是 1 则免弹窗）
+            if keepAliveMode == .power {
+                sleepGuard.setEnabled(true)   // 强力模式：同时拉 pmset 闸（已是 1 则免弹窗）
+            }
             UserDefaults.standard.set(true, forKey: "resumeKeepAliveOnLaunch")
         } else {
-            engine.stop()   // 防睡回收由 observeEnginePhase 的 phase 观察统一触发
+            engine.stop()   // pmset 回收由 phase 观察统一触发（普通模式 isEnabled 恒 false，天然 no-op）
             UserDefaults.standard.set(false, forKey: "resumeKeepAliveOnLaunch")
         }
         refreshIcon()
@@ -187,6 +201,12 @@ final class StatusBarController: NSObject {
             return statusReport()
         case "login off":
             login.disable()
+            return statusReport()
+        case "mode normal":
+            setKeepAliveMode(.normal)
+            return statusReport()
+        case "mode power":
+            setKeepAliveMode(.power)
             return statusReport()
         case "quit":
             DispatchQueue.main.async { NSApp.terminate(nil) }
@@ -219,6 +239,7 @@ final class StatusBarController: NSObject {
         lines.append("protecting=\(engine.isProtecting ? "yes" : "no")")
         lines.append("login=\(login.isEnabled ? "on" : "off")")
         lines.append("sleep_guard=\(sleepGuard.isEnabled ? "on" : "off")")
+        lines.append("mode=\(keepAliveMode.rawValue)")
         return lines.joined(separator: "\n")
     }
 
@@ -244,6 +265,13 @@ final class StatusBarController: NSObject {
                               action: #selector(toggleKeepAlive), keyEquivalent: "")
         keep.target = self
         menu.addItem(keep)
+        let mode = NSMenuItem(title: keepAliveMode == .normal
+                                ? "保活模式：普通（零密码，点按切强力）"
+                                : "保活模式：强力（全覆盖，点按切普通）",
+                              action: #selector(toggleKeepAliveMode), keyEquivalent: "")
+        mode.target = self
+        menu.addItem(mode)
+        menu.addItem(caption("强力=普通+系统级禁睡（pmset），开关各弹一次密码；合盖仍入睡时用"))
         menu.addItem(.separator())
 
         let startAtLogin = NSMenuItem(title: "开机自启", action: #selector(toggleLaunchItem), keyEquivalent: "")
@@ -273,7 +301,7 @@ final class StatusBarController: NSObject {
         let quit = NSMenuItem(title: "退出 ClamAwake", action: #selector(quitApp), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
-        menu.addItem(caption("ClamAwake v0.3.5"))
+        menu.addItem(caption("ClamAwake v0.3.6"))
         return menu
     }
 
@@ -314,6 +342,24 @@ final class StatusBarController: NSObject {
         } else {
             login.enable()
         }
+    }
+
+    /// 设置保活模式（菜单/CLI 同路径）。切换时把 pmset 对齐新模式：
+    /// 切到强力且保活开着 → 补拉闸（弹授权）；切到普通 → 撤闸不留残留（弹授权，若开着）。
+    private func setKeepAliveMode(_ mode: KeepAliveMode) {
+        keepAliveMode = mode
+        sleepGuard.refresh()
+        if mode == .power {
+            if keepAliveOn && !sleepGuard.isEnabled {
+                sleepGuard.setEnabled(true)
+            }
+        } else if sleepGuard.isEnabled {
+            sleepGuard.setEnabled(false)
+        }
+    }
+
+    @objc private func toggleKeepAliveMode() {
+        setKeepAliveMode(keepAliveMode == .normal ? .power : .normal)
     }
 
     @objc private func openLoginItemsSettings() {

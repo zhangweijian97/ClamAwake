@@ -23,7 +23,8 @@ ClamAwake 的做法：给系统接一块自建的虚拟屏，合盖后由虚拟�
 点菜单栏图标 →「开启保活」，完成。之后合盖：机器继续跑任务，屏幕熄灭；点「停止保活」或退出应用即恢复原状。
 
 - **右键单击菜单栏图标**：直接开启 / 停止保活（隐藏快捷键，不进菜单；左键仍是打开菜单）；
-- 开启保活会弹一次管理员授权（同时禁用系统睡眠，与虚拟屏镜像一起生效）；停止保活时会再弹一次把系统睡眠恢复默认；系统已是目标状态时不重复弹窗。全程不需要打开终端。
+- **保活模式**：菜单里有「保活模式」一项，默认**普通模式**，零密码；机型合盖仍会入睡时，点按切到**强力模式**；
+- 授权行为随模式不同：普通模式全程不弹授权窗（虚拟屏镜像 + caffeinate 断言随开关生灭，结构上无残留）；强力模式额外做系统级禁睡（pmset），开、关保活时各弹一次管理员密码，系统已是目标状态时不重复弹窗。全程不需要打开终端。
 - 想开机自启：菜单里勾选「登录时启动」；
 - 卸载：退出应用后，把 ClamAwake 从「应用程序」拖进废纸篓即可，无残留。
 
@@ -44,11 +45,12 @@ ClamAwake 的做法：给系统接一块自建的虚拟屏，合盖后由虚拟�
 菜单栏应用本身也能被命令行驱动：命令发给正在运行的 app，走的是与菜单、右键完全相同的那条路径，开关状态与图标同步，不会出现两套保活。
 
 ```sh
-/Applications/ClamAwake.app/Contents/MacOS/ClamAwake status      # phase / display_id / protecting / login / sleep_guard
+/Applications/ClamAwake.app/Contents/MacOS/ClamAwake status      # phase / display_id / protecting / login / sleep_guard / mode
 /Applications/ClamAwake.app/Contents/MacOS/ClamAwake start --wait # 开保活，等到建屏完成或失败
 /Applications/ClamAwake.app/Contents/MacOS/ClamAwake stop
 /Applications/ClamAwake.app/Contents/MacOS/ClamAwake toggle      # 同右键
 /Applications/ClamAwake.app/Contents/MacOS/ClamAwake login on|off
+/Applications/ClamAwake.app/Contents/MacOS/ClamAwake mode normal|power   # 保活模式：普通=零密码；强力=加系统级禁睡（pmset）
 ```
 
 app 没在运行时，除 `quit` 外的命令会先用 `open -b com.clamawake.app` 拉起它再执行；输出是 `key=value` 行，可直接给脚本消费。

@@ -2,7 +2,7 @@
 // GPL-3.0，见仓库 LICENSE
 //
 // 壳作为宿主调用引擎（src/vd-engine.swift 零改动）：
-//   · 启动 = spawn `vd-engine create <W> <H> --hidpi --hold` 子进程 + `caffeinate -d` 显示断言
+//   · 启动 = spawn `vd-engine create <W> <H> --hidpi --hold` 子进程 + `caffeinate -d -s` 显示+系统断言
 //     （合盖保活配方，见 README）。虚拟屏活在引擎进程生命周期内，引擎没有跨进程销毁 API，
 //     所以「停止」唯一可行的实现 = 结束引擎子进程（--hold 对 SIGTERM 有清理 handler，exit(0)）。
 //   · 状态确认不用引擎 stdout——stdout 是管道时引擎的 print 走全缓冲，--hold 进程永不 flush
@@ -145,7 +145,7 @@ final class EngineController: ObservableObject {
     private func spawnCaffeinate() throws -> Process {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/caffeinate")
-        p.arguments = ["-d"]
+        p.arguments = ["-d", "-s"]   // 显示断言+系统断言
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
         try p.run()
