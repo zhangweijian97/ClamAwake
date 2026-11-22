@@ -148,3 +148,7 @@ launchd 那一支没落地也无需落地——同一条用户价值（重启后
 - **发布**：tag v0.3.7，Release 页 https://github.com/zhangweijian97/ClamAwake/releases/tag/v0.3.7 （稳定版，DMG 附件，notes 用新词形）。0.3.5/0.3.6 不单独发（其变更全部含于 0.3.7）。
 - **换装**：/Applications 已换新构建（quit → ditto → 重开，resumeKeepAliveOnLaunch 自动恢复保活），核对 mode=battery / protecting=yes / 新虚拟屏 id=137。
 - **冒烟注意（新增坑）**：`dist/.../MacOS/ClamAwake` 无参数=GUI 分支会拉起第二实例挂住冒烟——usage 冒烟要传假命令参数（`__usage_probe__`，exit 2 分支打印 usage）。strings 对中文字符串常量无效，冒烟以运行时输出为准。
+
+## 2026-11-22 晚 0.3.8：授权语义回退（闸随保活生灭）+ 撤闸链修复
+
+用户体感「开关不需要密码」触发调查：0.3.7 档位重构（0fda577）主动删除 phase 观察 sink（闸常驻，密码只在换档——当时为解决 0.3.5 每次开关弹窗的痛点，实施单有记录）——**有意识设计，不是 bug**；但闸常驻的代价在 agent 面出现后暴露：①关保活后 SleepDisabled=1 残留，用户「关掉=恢复默认睡眠」预期被违背；②agent 收尾判据失效（protecting=no 不等于系统干净）。**决策：回退到闸随保活生灭**（5b92336+7eedbd8）：开关各弹一次授权（闸已在免弹）、换装弹两次；stop/quit/引擎意外死三路撤闸（phase 变化沿统一触发，quit 挂起退出）；quit 清 resume 键（用户主动退出的正确语义），换装恢复职责归 install.sh（quit 前记 protecting，重开后 start 恢复——受弹窗时序影响，agent 兜底句已进说明书安装段「装完确认 protecting=yes」）。文案六处对齐（usage/菜单/SKILL/README 中英/guide 卡收尾判据=protecting=no 且 sleep_guard=off 才算收干净）。实弹验证：stop 撤闸 1→0 过。HANDOFF 0.3.7 段缺档位重构记录（0fda577）——本段补记。
