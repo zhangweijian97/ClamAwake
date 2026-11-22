@@ -232,6 +232,8 @@ hdiutil detach "/Volumes/ClamAwake"
 
 Pick: user needs lid-closed on battery too → `battery` (hand the admin approval to the user); plugged-in workloads only → `plugged`.
 
+Battery-mode start pops the auth dialog: Allow = keep-alive takes effect (`status` shows `protecting=yes` and `sleep_guard=on`); Don't Allow = the keep-alive does not start (back to the off state) — run `start` again to retry.
+
 `ClamAwake readme` — prints the agent manual (read it first; three moments: minimal script + taboo list + acceptance criteria; the runtime layer).
 
 ### Exit code semantics (per source code and live measurement)

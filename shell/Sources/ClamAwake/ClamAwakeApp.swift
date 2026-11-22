@@ -267,8 +267,9 @@ final class StatusBarController: NSObject {
         })
     }
 
-    /// 关闭的后半段：停引擎 + 清恢复键 + 图标落回关闭态。
-    /// 只有撤闸已成立（或本就不需要撤闸）才走到这里——停引擎后 phase 沿上的撤闸是幂等空操作。
+    /// 落回关闭态的唯一动作：停引擎 + 清恢复键 + 图标落回关闭态。
+    /// 两个调用者：stopKeepAlive 撤闸成立后的关闭、pullGuardIfNeeded 补闸被拒后的开启回滚。
+    /// 到达这里时闸一定不在（撤闸已成立 / 本次没拉上）——停引擎后 phase 沿上的撤闸是幂等空操作。
     private func finishStop() {
         engine.stop()
         UserDefaults.standard.set(false, forKey: "resumeKeepAliveOnLaunch")
@@ -276,12 +277,21 @@ final class StatusBarController: NSObject {
     }
 
     /// 电池档完整性：保活承诺「合盖必不睡」，闸缺失时兑现不了——补拉（弹一次授权；闸已在=免弹）
+    /// 开启原子化（对称 stopKeepAlive 的关闭原子化）：补闸被拒 / pmset 写入失败 → 整个开启回滚，
+    /// 不留「图标亮着、合盖却会睡」的半开启态。允许（闸已落）→ 保活继续，无事发生。
     private func pullGuardIfNeeded() {
         guard keepAliveMode == .battery else { return }
         sleepGuard.refresh()
-        if !sleepGuard.isEnabled {
-            sleepGuard.setEnabled(true)
-        }
+        guard !sleepGuard.isEnabled else { return }
+        sleepGuard.setEnabled(true, whenDone: { [weak self] in
+            guard let self else { return }
+            self.sleepGuard.refresh()
+            // 闸已落 = 开启成立，什么都不做；闸没落（用户不允许 / 写入失败）= 回滚整个开启
+            guard !self.sleepGuard.isEnabled else { return }
+            // 授权飞行期间用户切到了插电档：该档不依赖闸，回滚会误杀刚切过去的保活——不滚
+            guard self.keepAliveMode == .battery else { return }
+            self.finishStop()
+        })
     }
 
     private func releaseGuardIfNeeded() {

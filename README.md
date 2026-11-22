@@ -232,6 +232,8 @@ hdiutil detach "/Volumes/ClamAwake"
 
 选档规则：用户在电池上也要合盖不睡 → `battery`，把管理员授权那一步交回用户；只是插电跑任务 → `plugged`。
 
+电池档开启会弹授权窗：允许=保活生效（`status` 读 `protecting=yes` 且 `sleep_guard=on`）；不允许=保活不会开启（回到关闭态），想开再 `start` 一次。
+
 `ClamAwake readme` ——输出智能体说明书（动手前先读；三时刻最小集+禁言单+验收，运行时面）。
 
 ### 退出码语义（以源码与实测为准）

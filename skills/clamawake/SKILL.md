@@ -42,6 +42,8 @@ hdiutil detach "/Volumes/ClamAwake"
 
 状态输出是 `key=value` 行：`phase` / `display_id` / `protecting` / `login` / `sleep_guard` / `mode` / `power`。
 
+`start --wait` 只等到建屏完成；电池档随后还会弹授权窗：允许=保活生效（`status` 读 `protecting=yes` 且 `sleep_guard=on`）；不允许=保活不会开启（回到关闭态），想开再 `start` 一次。
+
 ## 模式（名字反直觉，按覆盖范围起名）
 
 | 值 | 真实语义 | 授权 |
