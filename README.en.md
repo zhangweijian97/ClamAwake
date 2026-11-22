@@ -1,4 +1,4 @@
-# ClamAwake — macOS Lid-Closed Keep-Alive Tool
+# ClamAwake — macOS Lid-Closed No-Sleep Tool
 
 [简体中文](README.md) | **English**
 
@@ -20,14 +20,14 @@ Three steps:
 2. Drag ClamAwake into the Applications folder;
 3. In Applications, **right-click ClamAwake → Open** (needed the first time to pass macOS's protection for unsigned apps). A shell icon appears in the menu bar.
 
-Click the menu bar icon → "Start Keep-Alive", done. From then on, closing the lid: the machine keeps running your tasks while the screen stays off. Click "Stop Keep-Alive" or quit the app to restore.
+Click the menu bar icon → "Start Lid-Closed No-Sleep", done. From then on, closing the lid: the machine keeps running your tasks while the screen stays off. Click "Stop Lid-Closed No-Sleep" or quit the app to restore.
 
-- **Right-click the menu bar icon** to start/stop keep-alive directly (hidden shortcut; left-click still opens the menu);
-- **Keep-alive mode**: the menu offers two modes — **Battery mode** by default: the first time you start keep-alive, one admin authorization enables a system-level sleep disable — from then on, toggling keep-alive needs no password, and a closed lid never sleeps, plugged in or on battery; the computer rarely leaves the desk? Switch to **Plugged-in mode** (zero passwords, no system settings touched);
-- Authorization follows the mode: Battery mode pops an admin dialog only when the sleep-disable guard is absent (the first keep-alive start, or a mode switch re-enabling it); once the guard is in place, toggling keep-alive needs no password; Plugged-in mode never pops an authorization dialog (the virtual display mirror + caffeinate assertion come and go with the switch, structurally nothing left behind). No terminal needed at any point.
+- **Right-click the menu bar icon** to start/stop Lid-Closed No-Sleep directly (hidden shortcut; left-click still opens the menu);
+- **No-sleep range**: under "Start Lid-Closed No-Sleep" the menu offers two options — **Never sleep** by default: the first time you start, one admin authorization enables a system-level sleep disable — from then on, toggling needs no password, and a closed lid never sleeps, plugged in or on battery; the computer rarely leaves the desk? Choose **Only when plugged in** (zero passwords, no system settings touched);
+- Authorization follows the selected range: "Never sleep" pops an admin dialog only when the sleep-disable guard is absent (the first start, or a switch re-enabling it); once the guard is in place, toggling needs no password; "Only when plugged in" never pops an authorization dialog (the virtual display mirror + caffeinate assertion come and go with the switch, structurally nothing left behind). No terminal needed at any point.
 - For auto-start: enable "Launch at Login" in the menu;
-- To uninstall: quit the app, then move ClamAwake from Applications to the Trash. No leftovers. If you were in Battery mode, switch back to Plugged-in mode before uninstalling (this removes the system-level sleep disable), or run `sudo pmset -a disablesleep 0` manually.
-- **Promise grading**: "lid closed = no sleep" is guaranteed by Battery mode (mechanism level); Plugged-in mode behavior has been field-tested for days on a 16-inch MacBook Pro (M-series); behavior may differ on other models / macOS versions — if the machine still sleeps with the lid closed, please open an issue (attach recent `pmset -g log` output).
+- To uninstall: quit the app, then move ClamAwake from Applications to the Trash. No leftovers. If you chose "Never sleep", switch to "Only when plugged in" before uninstalling (this removes the system-level sleep disable), or run `sudo pmset -a disablesleep 0` manually.
+- **Promise grading**: "lid closed = no sleep" is guaranteed by "Never sleep" (mechanism level); "Only when plugged in" behavior has been field-tested for days on a 16-inch MacBook Pro (M-series); behavior may differ on other models / macOS versions — if the machine still sleeps with the lid closed, please open an issue (attach recent `pmset -g log` output).
 
 > The current DMG is ad-hoc signed, which is why step 3's right-click is needed the first time; proper signing & notarization will remove that step.
 
@@ -43,7 +43,7 @@ Beyond the menu bar app, the repo ships two CLI tools and the full build chain:
 
 ### The app's built-in CLI (v0.3.4+)
 
-The menu bar app itself can be driven from the command line: commands are sent to the running app and take exactly the same path as the menu and the right-click, so there is one keep-alive state, not two.
+The menu bar app itself can be driven from the command line: commands are sent to the running app and take exactly the same path as the menu and the right-click, so there is one no-sleep state, not two.
 
 ```sh
 /Applications/ClamAwake.app/Contents/MacOS/ClamAwake status      # phase / display_id / protecting / login / sleep_guard / mode / power
@@ -51,7 +51,7 @@ The menu bar app itself can be driven from the command line: commands are sent t
 /Applications/ClamAwake.app/Contents/MacOS/ClamAwake stop
 /Applications/ClamAwake.app/Contents/MacOS/ClamAwake toggle      # same as right-click
 /Applications/ClamAwake.app/Contents/MacOS/ClamAwake login on|off
-/Applications/ClamAwake.app/Contents/MacOS/ClamAwake mode plugged|battery   # keep-alive mode: Plugged-in = zero passwords; Battery = adds persistent system-level sleep disable (pmset)
+/Applications/ClamAwake.app/Contents/MacOS/ClamAwake mode plugged|battery   # battery = Never sleep (one-time auth, persistent system-level sleep disable); plugged = Only when plugged in
 ```
 
 If the app is not running, every command except `quit` launches it first (`open -b com.clamawake.app`). Output is `key=value` lines, easy to consume from scripts.
@@ -88,7 +88,7 @@ check=lid_sleep result=pass detail=SleepDisabled=1 (lid-close sleep disabled)
 Two lines deserve attention (a warn doesn't block, but read the advice on stderr):
 
 - `lid_sleep` warn → the machine will sleep when the lid closes. Disable it with the exact command printed on stderr: `sudo pmset -a disablesleep 1` (revert with `sudo pmset -a disablesleep 0`).
-- `keepalive_running` warn → a keep-alive is already running (engine process / kya-marked display / caffeinate assertion). Follow the stderr advice: reuse it, or end it with `kill -TERM <pid>` first.
+- `keepalive_running` warn → a no-sleep session is already running (engine process / kya-marked display / caffeinate assertion). Follow the stderr advice: reuse it, or end it with `kill -TERM <pid>` first.
 
 ### Step 3: Start the engine (foreground; keep this terminal open)
 
@@ -123,7 +123,7 @@ For visual capture that needs "the same picture as the current session":
 ./mirror-probe unmirror 22     # undo: stdout: unmirrored
 ```
 
-### Undo the keep-alive
+### Stop Lid-Closed No-Sleep
 
 - Stop the engine: Ctrl-C in the engine's terminal (or from another terminal, `kill -TERM <engine-pid>`) — the virtual display dies with the process and the session-scoped mirror relationship lapses with it;
 - To light the built-in panel up immediately: `caffeinate -u -t 3`.
@@ -164,7 +164,7 @@ In `list` output, rows with `kya=yes` are virtual displays created by this engin
 
 Direction convention: `mirror` makes the virtual display (virtualID/slave) mirror the internal display (internalID/master); `unmirror` removes virtualID's mirror relationship; `status` prints the CGDisplayMirrorsDisplay reading (read-only, no side effects).
 
-### The lid-closed keep-alive recipe
+### The lid-closed no-sleep recipe
 
 ```sh
 vd-engine create 1800 1169 --hidpi --hold &
@@ -175,7 +175,7 @@ Then close the lid: the screen goes dark, the machine keeps running, and visual 
 
 ### Running inside DeepSeek Harness (plugin form)
 
-The DSH plugin now lives in its own repository: [zhangweijian97/dsh-clamawake](https://github.com/zhangweijian97/dsh-clamawake). It binds this app's engine to the DSH host lifecycle: host starts = recipe runs; host stops = its own children are terminated. An existing `kya=yes` display is reused, never duplicated, and an unexpectedly exited engine is restarted with backoff (1s → 30s).
+The DSH plugin now lives in its own repository: [zhangweijian97/dsh-clamawake](https://github.com/zhangweijian97/dsh-clamawake). It binds this app's engine to the DSH host lifecycle: host starts = the no-sleep recipe runs; host stops = its own children are terminated. An existing `kya=yes` display is reused, never duplicated, and an unexpectedly exited engine is restarted with backoff (1s → 30s).
 
 The engine ships with this app; the plugin repository holds code only — install ClamAwake first, then the plugin. See the plugin README for installation details.
 
@@ -212,11 +212,11 @@ vd-engine doctor    # exit 0 = no blocking problem (warns may continue) / 1 = bl
 stdout carries one `check=<key> result=<pass|warn|fail> detail=<…>` line per check; route on result:
 
 - all pass → continue;
-- `keepalive_running` warn → the engine pid / kya display id / caffeinate assertion are all in detail; if it's not a keep-alive you meant to keep, `kill -TERM <pid>`;
+- `keepalive_running` warn → the engine pid / kya display id / caffeinate assertion are all in detail; if it's not a no-sleep session you meant to keep, `kill -TERM <pid>`;
 - `lid_sleep` warn → disable sleep with the exact command on stderr (`sudo pmset -a disablesleep 1`);
 - any fail → stderr explains; abort.
 
-### Standard keep-alive session (every expected output measured live)
+### Standard no-sleep session (every expected output measured live)
 
 ```sh
 # 1) Create the display and hold it. stdout prints the display id (fflush'd, readable
@@ -273,7 +273,7 @@ On the lid side, a `caffeinate -d` display assertion is used (full recipe above)
 
 ### The machine still sleeps after closing the lid?
 
-You're on battery — switch to Battery mode. Plugged-in mode cannot prevent lid-close sleep on battery: that's macOS's power policy (clamshell wake requires AC power).
+You chose "Only when plugged in" and you're on battery — switch to "Never sleep" ("Only when plugged in" cannot prevent lid-close sleep on battery: that's macOS's power policy — clamshell wake requires AC power).
 
 ### Engine fails to start (create exits 1)
 
@@ -300,11 +300,11 @@ A typical line: `检测到分辨率被重置（1800×1169 → 1512×982），已
 
 One more phenomenon that is easy to misread as a failure: **when two virtual displays coexist** (say, the ClamAwake app and the DSH plugin each running one, or a display being tested alongside), creating or destroying the other virtual display makes WindowServer re-lay out the display configuration, and this display's current mode may be rewritten along the way (observed: 1800×1169 → 800×600). While mirroring, the picture is driven by the main display, so a rewritten mode on this display does not self-heal on the spot — a mirror slave's mode cannot be set back directly; once it leaves mirroring (lid closed, this display becoming the main one) the guard restores the target mode. So a rewritten mode seen during mirroring is not evidence that the guard is broken.
 
-### A keep-alive already exists
+### A no-sleep session already exists
 
 `vd-engine doctor`'s `keepalive_running` is warn, or `pgrep -x vd-engine` prints something:
 
-- one vd-engine process + one `kya=yes` display + a caffeinate assertion = a running keep-alive. If you (or a previous session) meant to keep it → reuse it: take the `kya=yes` id from `vd-engine list`, don't create a duplicate.
+- one vd-engine process + one `kya=yes` display + a caffeinate assertion = a running no-sleep session. If you (or a previous session) meant to keep it → reuse it: take the `kya=yes` id from `vd-engine list`, don't create a duplicate.
 - To start fresh: `kill -TERM <pid>` (the display dies with the process) → `create` again.
 - A `kya=yes` display with no vd-engine process → created by another virtual display tool (e.g. SimpleDisplay): quit that tool, or just use its display.
 - Multiple virtual displays can coexist and can mirror the same internal display simultaneously (verified live); ids are independent.

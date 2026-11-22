@@ -72,11 +72,11 @@ enum ControlCLI {
     static let usageText = """
     用法: ClamAwake <命令>
       status                打印当前状态（phase/protecting/display_id/login/sleep_guard/mode/power）
-      start [--wait]        开启保活（--wait 等到建屏完成或失败再返回）
-      stop                  停止保活
-      toggle                切换保活（同鼠标右键）
+      start [--wait]        开启合盖不睡眠（--wait 等到建屏完成或失败再返回）
+      stop                  停止合盖不睡眠
+      toggle                切换合盖不睡眠（同鼠标右键）
       login on|off          开机自启
-      mode plugged|battery  保活档位（插电=零密码；电池=加系统级禁睡常驻）
+      mode plugged|battery  合盖不睡眠范围（plugged=只在充电时不睡；battery=任何情况都不睡，首次授权一次）
       quit                  退出 app
     说明：命令发给正在运行的 ClamAwake.app；未运行时自动先拉起（除 quit 外）。
     """

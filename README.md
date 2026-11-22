@@ -1,4 +1,4 @@
-# ClamAwake — macOS 合盖保活工具
+# ClamAwake — macOS 合盖不睡眠工具
 
 **简体中文** | [English](README.en.md)
 
@@ -20,14 +20,14 @@ ClamAwake 的做法：给系统接一块自建的虚拟屏，合盖后由虚拟�
 2. 把 ClamAwake 拖进「应用程序」文件夹；
 3. 在「应用程序」里**右键 ClamAwake → 打开**（首次需要这样通过 macOS 对未签名应用的保护），菜单栏出现贝壳图标。
 
-点菜单栏图标 →「开启保活」，完成。之后合盖：机器继续跑任务，屏幕熄灭；点「停止保活」或退出应用即恢复原状。
+点菜单栏图标 →「开启合盖不睡眠」，完成。之后合盖：机器继续跑任务，屏幕熄灭；点「关闭合盖不睡眠」或退出应用即恢复原状。
 
-- **右键单击菜单栏图标**：直接开启 / 停止保活（隐藏快捷键，不进菜单；左键仍是打开菜单）；
-- **保活档位**：菜单里有「保活档位」两项，默认**电池档**：第一次开启保活时弹一次管理员授权，加上系统级禁睡——之后开关保活零密码，合盖必不睡，无论插着电还是用电池；电脑基本不挪窝？切**插电档**（零密码，不动系统设置）；
-- 授权行为随档位不同：电池档只在系统级禁睡的闸不在场时弹一次管理员密码（首次开保活，或换档补拉），闸常驻后开/关保活零密码；插电档全程不弹授权窗（虚拟屏镜像 + caffeinate 断言随开关生灭，结构上无残留）。全程不需要打开终端。
+- **右键单击菜单栏图标**：直接开启 / 关闭合盖不睡眠（隐藏快捷键，不进菜单；左键仍是打开菜单）；
+- **合盖不睡眠范围**：菜单里「开启合盖不睡眠」下面有两个选项，默认**任何情况都不睡**：第一次开启时弹一次管理员授权，加上系统级禁睡——之后开关零密码，合盖必不睡，无论插着电还是用电池；电脑基本不挪窝？选**只在充电时不睡**（零密码，不动系统设置）；
+- 授权行为随所选范围不同：「任何情况都不睡」只在系统级禁睡的闸不在场时弹一次管理员密码（首次开启，或换档补拉），闸常驻后开/关零密码；「只在充电时不睡」全程不弹授权窗（虚拟屏镜像 + caffeinate 断言随开关生灭，结构上无残留）。全程不需要打开终端。
 - 想开机自启：菜单里勾选「登录时启动」；
-- 卸载：退出应用后，把 ClamAwake 从「应用程序」拖进废纸篓即可，无残留。若在电池档，卸载前先切回插电档（撤销系统级禁睡），或手动执行 `sudo pmset -a disablesleep 0`。
-- **承诺分级**：「合盖必不睡」由电池档保证（机制级）；插电档行为在 16 寸 MacBook Pro（M 系）上多日实测，不同机型 / 系统版本行为可能不同——遇到合盖仍入睡，请开 issue 反馈（附 `pmset -g log` 最近记录）。
+- 卸载：退出应用后，把 ClamAwake 从「应用程序」拖进废纸篓即可，无残留。若选了「任何情况都不睡」，卸载前先切到「只在充电时不睡」（撤销系统级禁睡），或手动执行 `sudo pmset -a disablesleep 0`。
+- **承诺分级**：「合盖必不睡」由「任何情况都不睡」保证（机制级）；「只在充电时不睡」的行为在 16 寸 MacBook Pro（M 系）上多日实测，不同机型 / 系统版本行为可能不同——遇到合盖仍入睡，请开 issue 反馈（附 `pmset -g log` 最近记录）。
 
 > 当前 DMG 为免签分发（ad-hoc 签名），所以首次打开需要第 3 步的右键操作；正式签名公证后会省去这一步。
 
@@ -35,7 +35,7 @@ ClamAwake 的做法：给系统接一块自建的虚拟屏，合盖后由虚拟�
 
 ## 命令行用户（geek / AI 工程）
 
-菜单栏应用之外，仓库提供两个命令行工具与完整构建链：
+菜单栏应用之外，仓库提供两个命令行工具与完整构建链（命令行文本里的 `battery` / `plugged` 是两个选项的内部值：`battery`=任何情况都不睡、`plugged`=只在充电时不睡）：
 
 - `vd-engine` — 虚拟屏引擎（创建 / 查询虚拟屏，含 `doctor` 环境自检）
 - `mirror-probe` — 显示器镜像工具（虚拟屏与内屏建立 / 解除镜像）
@@ -43,15 +43,15 @@ ClamAwake 的做法：给系统接一块自建的虚拟屏，合盖后由虚拟�
 
 ### 应用自带的命令行（v0.3.4+）
 
-菜单栏应用本身也能被命令行驱动：命令发给正在运行的 app，走的是与菜单、右键完全相同的那条路径，开关状态与图标同步，不会出现两套保活。
+菜单栏应用本身也能被命令行驱动：命令发给正在运行的 app，走的是与菜单、右键完全相同的那条路径，开关状态与图标同步，不会出现两套机制。
 
 ```sh
 /Applications/ClamAwake.app/Contents/MacOS/ClamAwake status      # phase / display_id / protecting / login / sleep_guard / mode / power
-/Applications/ClamAwake.app/Contents/MacOS/ClamAwake start --wait # 开保活，等到建屏完成或失败
+/Applications/ClamAwake.app/Contents/MacOS/ClamAwake start --wait # 开合盖不睡眠，等到建屏完成或失败
 /Applications/ClamAwake.app/Contents/MacOS/ClamAwake stop
 /Applications/ClamAwake.app/Contents/MacOS/ClamAwake toggle      # 同右键
 /Applications/ClamAwake.app/Contents/MacOS/ClamAwake login on|off
-/Applications/ClamAwake.app/Contents/MacOS/ClamAwake mode plugged|battery   # 保活档位：插电=零密码；电池=加系统级禁睡常驻（pmset）
+/Applications/ClamAwake.app/Contents/MacOS/ClamAwake mode plugged|battery   # battery=任何情况都不睡（首次授权一次，系统级禁睡常驻）；plugged=只在充电时不睡
 ```
 
 app 没在运行时，除 `quit` 外的命令会先用 `open -b com.clamawake.app` 拉起它再执行；输出是 `key=value` 行，可直接给脚本消费。
@@ -88,7 +88,7 @@ check=lid_sleep result=pass detail=SleepDisabled=1 (lid-close sleep disabled)
 重点看两行（warn 不阻塞，但要看 stderr 里的建议）：
 
 - `lid_sleep` 为 warn → 合盖会入睡，照 stderr 里的确切命令禁睡：`sudo pmset -a disablesleep 1`（恢复默认 `sudo pmset -a disablesleep 0`）；
-- `keepalive_running` 为 warn → 已有一套保活在跑（引擎进程 / kya 标记屏 / caffeinate 断言），照 stderr 处理：复用它，或 `kill -TERM <pid>` 结束后再继续。
+- `keepalive_running` 为 warn → 已有一套合盖不睡眠在跑（引擎进程 / kya 标记屏 / caffeinate 断言），照 stderr 处理：复用它，或 `kill -TERM <pid>` 结束后再继续。
 
 ### 第 3 步：启动引擎（前台，别关这个终端）
 
@@ -123,7 +123,7 @@ caffeinate -d &
 ./mirror-probe unmirror 22     # 解除：stdout: unmirrored
 ```
 
-### 解除保活
+### 解除合盖不睡眠
 
 - 结束引擎：回引擎那个终端按 Ctrl-C（或另开终端 `kill -TERM <引擎pid>`）——虚拟屏随进程消失，会话级镜像关系随之自然失效；
 - 想立刻点亮内屏：`caffeinate -u -t 3`。
@@ -164,7 +164,7 @@ caffeinate -d &
 
 方向约定：`mirror` 让虚拟屏（virtualID/slave）镜像内屏（internalID/master）；`unmirror` 解除 virtualID 的镜像关系；`status` 打印 CGDisplayMirrorsDisplay 读数（只读无副作用）。
 
-### 合盖保活配方
+### 合盖不睡眠配方
 
 ```sh
 vd-engine create 1800 1169 --hidpi --hold &
@@ -175,7 +175,7 @@ caffeinate -d &
 
 ### 在 DeepSeek Harness 里用（插件形态）
 
-DSH 插件已独立成仓：[zhangweijian97/dsh-clamawake](https://github.com/zhangweijian97/dsh-clamawake)。它把本应用的引擎绑到 DSH 宿主生命周期上：宿主起来＝保活配方在跑，宿主停止＝收掉自有子进程；已有 `kya=yes` 屏时复用不重建；引擎意外退出自动重启（退避 1s→30s）。
+DSH 插件已独立成仓：[zhangweijian97/dsh-clamawake](https://github.com/zhangweijian97/dsh-clamawake)。它把本应用的引擎绑到 DSH 宿主生命周期上：宿主起来＝合盖不睡眠配方在跑，宿主停止＝收掉自有子进程；已有 `kya=yes` 屏时复用不重建；引擎意外退出自动重启（退避 1s→30s）。
 
 引擎随本应用提供，插件仓只放代码——所以先装 ClamAwake，再装插件。装载方式与细节见插件仓 README。
 
@@ -216,7 +216,7 @@ stdout 逐行 `check=<key> result=<pass|warn|fail> detail=<…>`，按 result �
 - `lid_sleep` warn → 照 stderr 的确切命令禁睡（`sudo pmset -a disablesleep 1`）；
 - 任一 fail → stderr 有说明，中止流程。
 
-### 保活会话标准序列（每步预期输出已实测）
+### 合盖不睡眠会话标准序列（每步预期输出已实测）
 
 ```sh
 # 1) 建屏并常驻持有。stdout 打印屏 id（已 fflush，重定向到文件可即时读到）；stderr 打印诊断。
@@ -269,7 +269,7 @@ kill -TERM "$ENGINE_PID"
 
 ### 合盖后机器还是睡了？
 
-你在用电池——切电池档（插电档在电池下挡不住合盖睡眠，这是 macOS 的电源策略：合盖唤醒模式需要接电源）。
+你选了「只在充电时不睡」而此刻正用电池——切到「任何情况都不睡」（只在充电时不睡的选项在用电池时挡不住合盖睡眠，这是 macOS 的电源策略：合盖唤醒模式需要接电源）。
 
 ### 引擎启动失败（create 退出 1）
 
@@ -296,11 +296,11 @@ tail -f ~/Library/Logs/ClamAwake/vd-engine.log
 
 还有一种现象容易误判成故障：**两块虚拟屏并存时**（例如 ClamAwake 应用与 DSH 插件各跑一块，或有人在旁边测屏），另一块虚拟屏的生灭会让 WindowServer 重排显示配置，本屏当前档位可能被顺手改写（实测出现过 1800×1169 → 800×600）。处于镜像态时画面由主屏驱动，本屏档位被改写不会当场自愈——镜像成员（slave）的档位不能直接设回；等离开镜像态（合盖、本屏升为主屏）时，护档会按目标档把分辨率恢复回来。所以镜像期间看到档位被改写，不要据此判断护档失效。
 
-### 已存在保活冲突
+### 已存在合盖不睡眠冲突
 
 `vd-engine doctor` 的 `keepalive_running` 为 warn，或 `pgrep -x vd-engine` 有输出时：
 
-- 一个 vd-engine 进程 + 一块 `kya=yes` 屏 + caffeinate 断言 = 一套正在运行的保活。是你（或之前的会话）有意保留的 → 直接复用：`vd-engine list` 取 `kya=yes` 的 id 用，不要重复建屏。
+- 一个 vd-engine 进程 + 一块 `kya=yes` 屏 + caffeinate 断言 = 一套正在运行的合盖不睡眠。是你（或之前的会话）有意保留的 → 直接复用：`vd-engine list` 取 `kya=yes` 的 id 用，不要重复建屏。
 - 要重开一套：`kill -TERM <pid>`（屏随进程消失）→ 重新 `create`。
 - 有 `kya=yes` 屏但没有 vd-engine 进程 → 别的虚拟屏工具（如 SimpleDisplay）建的：退出那个工具，或直接用它的屏。
 - 多块虚拟屏可并存、也可同时镜像同一内屏（实测可行），屏 id 各自独立。

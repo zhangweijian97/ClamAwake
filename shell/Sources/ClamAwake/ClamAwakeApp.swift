@@ -296,28 +296,29 @@ final class StatusBarController: NSObject {
             }
         }
         if guardTripped {
-            menu.addItem(caption("⚠ 电池供电——插电档挡不住合盖，合盖会睡"))
-            let fix = NSMenuItem(title: "切换到电池档", action: #selector(switchToBatteryMode), keyEquivalent: "")
+            menu.addItem(caption("⚠ 正用电池——当前档只在充电时不睡，合盖会睡"))
+            let fix = NSMenuItem(title: "切换到：任何情况都不睡", action: #selector(switchToBatteryMode), keyEquivalent: "")
             fix.target = self
             menu.addItem(fix)
         }
         menu.addItem(.separator())
 
-        let keep = NSMenuItem(title: keepAliveOn ? "停止保活" : "开启保活",
+        let keep = NSMenuItem(title: keepAliveOn ? "关闭合盖不睡眠" : "开启合盖不睡眠",
                               action: #selector(toggleKeepAlive), keyEquivalent: "")
         keep.target = self
         menu.addItem(keep)
-        menu.addItem(caption("保活档位"))
-        let pluggedItem = NSMenuItem(title: "插电——电脑不挪窝，零密码不动系统设置",
-                                     action: #selector(choosePluggedMode), keyEquivalent: "")
-        pluggedItem.target = self
-        pluggedItem.state = keepAliveMode == .plugged ? .on : .off
-        menu.addItem(pluggedItem)
-        let batteryItem = NSMenuItem(title: "电池——带着电脑走，合盖必不睡（授权一次）",
+        let batteryItem = NSMenuItem(title: "任何情况都不睡（授权一次）",
                                      action: #selector(chooseBatteryMode), keyEquivalent: "")
         batteryItem.target = self
+        batteryItem.indentationLevel = 1
         batteryItem.state = keepAliveMode == .battery ? .on : .off
         menu.addItem(batteryItem)
+        let pluggedItem = NSMenuItem(title: "只在充电时不睡",
+                                     action: #selector(choosePluggedMode), keyEquivalent: "")
+        pluggedItem.target = self
+        pluggedItem.indentationLevel = 1
+        pluggedItem.state = keepAliveMode == .plugged ? .on : .off
+        menu.addItem(pluggedItem)
         menu.addItem(.separator())
 
         let startAtLogin = NSMenuItem(title: "开机自启", action: #selector(toggleLaunchItem), keyEquivalent: "")
@@ -344,11 +345,11 @@ final class StatusBarController: NSObject {
     private var phaseText: String {
         switch engine.phase {
         case .stopped:
-            return "当前状态：未保活"
+            return "当前状态：未开启"
         case .starting:
             return "当前状态：启动中…"
         case .running(let id):
-            return "当前状态：保活中（虚拟屏 id=\(id)）"
+            return "当前状态：合盖不睡眠中（虚拟屏 id=\(id)）"
         case .failed:
             return "当前状态：启动失败"
         }
