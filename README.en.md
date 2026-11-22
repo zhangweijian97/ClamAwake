@@ -6,6 +6,8 @@
 
 With the lid closed, the machine keeps running AI tasks and long jobs — and the screen stays off.
 
+> **For agents**: skip to [For AI agents](#for-ai-agents) — it is the executable path (install → decide → verify → clean up); you don't need the rest of this manual.
+
 ## The problem
 
 Close a MacBook's lid and macOS goes to sleep by default — AI tasks, builds, downloads, all interrupted. Keeping the machine awake with the display asleep doesn't work either: once the screen goes dark, screenshot-based visual capture gets a pure black frame.
@@ -183,6 +185,47 @@ The engine ships with this app; the plugin repository holds code only — instal
 
 The precise contract for automated invocation. Two conventions hold throughout: **stdout carries only machine-readable results** (display ids / `mirrored` / `unmirrored` / readings / doctor's `check=` lines); **diagnostics and executable recovery actions go to stderr**. Branch on exit code + stdout; never parse stderr text (stderr diagnostics are currently in Chinese — written for humans).
 
+### Install (agents can do this)
+
+The same `.app` users install — you can install it too, without sudo or an interactive terminal:
+
+```sh
+# skip if already installed; never overwrite an app that is running
+test -d /Applications/ClamAwake.app && echo installed
+
+curl -L -o /tmp/ClamAwake.dmg https://github.com/zhangweijian97/ClamAwake/releases/latest/download/ClamAwake.dmg
+hdiutil attach /tmp/ClamAwake.dmg -nobrowse -readonly
+cp -R "/Volumes/ClamAwake/ClamAwake.app" /Applications/
+hdiutil detach "/Volumes/ClamAwake"
+
+/Applications/ClamAwake.app/Contents/MacOS/ClamAwake status   # also launches the app
+```
+
+- `/Applications` is writable by admin accounts (`drwxrwxr-x root:admin`) — no sudo needed;
+- This path relies on curl downloads carrying no quarantine flag. If the target Mac still shows "unidentified developer", ask the user to right-click-open once — **do not clear the flag with `xattr -d com.apple.quarantine`**;
+- Version check: `/Applications/ClamAwake.app/Contents/Resources/vd-engine version`;
+- Below, `ClamAwake` means `/Applications/ClamAwake.app/Contents/MacOS/ClamAwake`, and `vd-engine` means `/Applications/ClamAwake.app/Contents/Resources/vd-engine`;
+- If your runtime supports skills, `skills/clamawake/SKILL.md` in this repo is the same playbook in skill form.
+
+### Decision table (user intent → action)
+
+| The user says | You do |
+|---|---|
+| keep running with the lid closed | `ClamAwake start --wait`, then `status` until `protecting=yes` |
+| stop after this task | same; you own the cleanup (see "Cleanup"), it will not stop itself |
+| done / save power | `ClamAwake stop` |
+| why did it sleep anyway | `vd-engine doctor` (`lid_sleep`), then `status` (`mode`, `power`) |
+| start at login | `ClamAwake login on` |
+
+`mode` values are named by *coverage*, not by condition — reading them literally gets it backwards:
+
+| Value | Actual meaning | Authorization |
+|---|---|---|
+| `mode battery` (default) | **never sleep on any power source** | one admin approval by the human (once) |
+| `mode plugged` | **only while on AC power** | none |
+
+Pick: user needs lid-closed on battery too → `battery` (hand the admin approval to the user); plugged-in workloads only → `plugged`.
+
 ### Exit code semantics (per source code and live measurement)
 
 `vd-engine`:
@@ -256,6 +299,19 @@ mirror-probe unmirror "$VIRTUAL_ID"
 kill -TERM "$ENGINE_PID"
 # verify teardown: vd-engine list no longer contains the $VIRTUAL_ID row
 ```
+
+### Verification ladder (what you may claim)
+
+- **L1 components**: `vd-engine doctor` all pass — environment only;
+- **L2 app**: `status` shows `phase=running` and `protecting=yes` — the keep-alive is running, nothing more;
+- **L3 outcome**: the machine actually stayed awake with the lid closed — **only a human can confirm; do not announce it for them**. Report "components ready; close the lid to confirm".
+
+### Cleanup (leave no residue)
+
+- Sessions you started, you stop: task done or user says "that's enough" → `stop`;
+- Done when `status` shows `protecting=no` and `vd-engine list` has no `kya=yes` display;
+- Quit the app with `ClamAwake quit` (takes the keep-alive down with it);
+- Never `kill` other vd-engine processes — they may belong to the menu-bar app or another tool.
 
 ### Error-handling conventions
 

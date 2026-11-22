@@ -6,6 +6,8 @@
 
 合盖之后，机器照常运行 AI / 长任务，屏幕熄灭。
 
+> **给智能体（agent）**：被派来安装或驱动 ClamAwake 的，直接跳到 [For AI agents](#for-ai-agents)——那里是「安装 → 决策 → 验证 → 收尾」的完整执行路径，不需要读完这份手册。
+
 ## 解决什么问题
 
 MacBook 合上盖子，macOS 默认直接进入睡眠——正在跑的 AI 任务、编译、下载全部中断。想让机器继续跑，让显示器睡眠也不行：屏幕一熄，截屏类的视觉采集拿到的就是纯黑画面。
@@ -183,6 +185,47 @@ DSH 插件已独立成仓：[zhangweijian97/dsh-clamawake](https://github.com/zh
 
 面向自动化调用的精确契约。两条约定贯穿始终：**stdout 只放机器可读结果**（屏 id / `mirrored` / `unmirrored` / 读数 / doctor 的 `check=` 行）；**诊断与可执行恢复动作走 stderr**。分支判断依据 = 退出码 + stdout，不要解析 stderr 文案（stderr 目前是中文诊断，人读的）。
 
+### 安装（agent 可直接执行）
+
+普通用户装的那份 `.app`，你也可以装——不用 sudo，不用终端交互：
+
+```sh
+# 已经装过就跳过，别覆盖正在运行的应用
+test -d /Applications/ClamAwake.app && echo installed
+
+curl -L -o /tmp/ClamAwake.dmg https://github.com/zhangweijian97/ClamAwake/releases/latest/download/ClamAwake.dmg
+hdiutil attach /tmp/ClamAwake.dmg -nobrowse -readonly
+cp -R "/Volumes/ClamAwake/ClamAwake.app" /Applications/
+hdiutil detach "/Volumes/ClamAwake"
+
+/Applications/ClamAwake.app/Contents/MacOS/ClamAwake status   # 顺带把应用拉起来并打印状态
+```
+
+- `/Applications` 对管理员账号可写（`drwxrwxr-x root:admin`），不需要 sudo；
+- 这条路径依赖「curl 下载的产物不带隔离标记」。若目标机器仍弹「未验证的开发者」，让用户手动右键打开一次即可——**不要用 `xattr -d com.apple.quarantine` 去清标记**；
+- 版本对账：`/Applications/ClamAwake.app/Contents/Resources/vd-engine version`；
+- 下文出现的 `ClamAwake` 指 `/Applications/ClamAwake.app/Contents/MacOS/ClamAwake`，`vd-engine` 指 `/Applications/ClamAwake.app/Contents/Resources/vd-engine`；
+- 如果你的运行环境支持 skill，仓库里的 `skills/clamawake/SKILL.md` 是同一套操作的技能形态。
+
+### 决策表（用户意图 → 动作）
+
+| 用户说的 | 你做的 |
+|---|---|
+| 合盖继续跑 / 别让电脑睡 | `ClamAwake start --wait`，再 `status` 确认 `protecting=yes` |
+| 跑完这个任务就关 | 同上；收尾由你负责（见「收尾」），别指望它自己停 |
+| 不用了 / 想省电 | `ClamAwake stop` |
+| 为什么合盖还是睡了 | `vd-engine doctor` 看 `lid_sleep`，再读 `status` 的 `mode` 与 `power` |
+| 开机自启 | `ClamAwake login on` |
+
+`mode` 两个值按「覆盖范围」起名，按字面猜会错：
+
+| 值 | 真实语义 | 授权 |
+|---|---|---|
+| `mode battery`（默认） | **任何情况都不睡**（用电池也保） | 首次需人类授权一次（你不能代输密码） |
+| `mode plugged` | **只在充电时不睡**（电池上合盖会睡） | 全程零授权 |
+
+选档规则：用户在电池上也要合盖不睡 → `battery`，把管理员授权那一步交回用户；只是插电跑任务 → `plugged`。
+
 ### 退出码语义（以源码与实测为准）
 
 `vd-engine`：
@@ -252,6 +295,19 @@ mirror-probe unmirror "$VIRTUAL_ID"
 kill -TERM "$ENGINE_PID"
 # 验证收屏：vd-engine list 不再有 $VIRTUAL_ID 的行
 ```
+
+### 验证阶梯（你能向用户声称什么）
+
+- **L1 组件**：`vd-engine doctor` 五项 pass——只说明环境可用；
+- **L2 应用**：`status` 里 `phase=running` 且 `protecting=yes`——只说明保活在跑；
+- **L3 结果**：合盖后机器没睡——**只有人合上盖子才能确认，不要代替用户宣布**。报告时给「组件已就绪，合盖效果请合上确认」。
+
+### 收尾（不要留残留）
+
+- 你开的保活由你关：任务结束或用户说「可以了」→ `stop`；
+- 收尾判据：`status` 的 `protecting=no`，且 `vd-engine list` 里没有 `kya=yes` 的屏；
+- 退出应用用 `ClamAwake quit`（会连同保活一起收掉）；
+- 不要 `kill` 别的 vd-engine 进程——那可能是菜单栏应用或另一个工具建的屏。
 
 ### 错误处理约定
 
