@@ -15,11 +15,10 @@ enum AgentGuide {
     - 一句预期：「装好之后合盖，机器继续跑，屏幕不亮。」
     - 授权预告（仅电池档）：「电池上也保需要一次管理员授权，弹窗出现时请输入密码。」
 
-    **该做（命令与读数）**
+    **该做（命令与读数，按序）**
     - 装（一条命令，用户零点击）：`curl -fsSL https://github.com/zhangweijian97/ClamAwake/releases/latest/download/install.sh | sh`
-    - 开：`/Applications/ClamAwake.app/Contents/MacOS/ClamAwake start --wait`
+    - 先判档再开（顺序重要——start 用当前档位，不判情境）：按用户原话与 `status` 的 `power` 读数选档，`mode plugged|battery` 切好档**再** `start --wait`。插电跑任务→`mode plugged`（零授权）；用户明说电池上也要保→`mode battery`（需授权，先转达授权预告）。原话未提电池且当前插电→先 plugged，并告知一句：「以后电池上也要保的话说一声，会需要一次授权。」
     - 验：同路径 `status`，读 `protecting=yes`（读数，不是感觉）
-    - 档位按用户原话与 status 的 power 读数判，不问：插电跑任务→plugged（零授权）；用户明说电池上也要保→battery（需授权）。原话未提电池且当前插电→先 plugged，并告知一句：「以后电池上也要保的话说一声，会需要一次授权。」
 
     **该停（禁言单）**
     - 不铺原理：虚拟屏、caffeinate、pmset、引擎进程——问到才讲
