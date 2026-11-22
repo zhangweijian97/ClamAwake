@@ -45,15 +45,21 @@ final class SleepGuardManager: ObservableObject {
     /// 已是目标值 → no-op（pmset 是持久设置，值没变就不弹窗）；
     /// isApplying 中收到新请求 → 记入 pendingTarget，当前写入完成后紧接着执行
     /// （堵「开保活的 osascript 飞行中引擎失败，回收调用被 isApplying 吞掉」的窗口）。
+    /// whenDone：本次写入（含接续的 pending 写入）落定后回调——退出前撤闸要等授权结果再退，靠它。
     private var pendingTarget: Bool?
+    private var pendingWhenDone: (() -> Void)?
 
-    func setEnabled(_ on: Bool) {
+    func setEnabled(_ on: Bool, whenDone: (() -> Void)? = nil) {
         if isApplying {
             pendingTarget = on
+            if let whenDone { pendingWhenDone = whenDone }
             return
         }
         refresh()
-        if isEnabled == on { return }
+        if isEnabled == on {
+            whenDone?()
+            return
+        }
         isApplying = true
         lastError = nil
         let cmd = on ? "pmset -a disablesleep 1" : "pmset -a disablesleep 0"
@@ -63,15 +69,24 @@ final class SleepGuardManager: ObservableObject {
         DispatchQueue.global().async { [weak self] in
             let result = runOSascript(script)
             DispatchQueue.main.async {
-                guard let self else { return }
+                guard let self else {
+                    whenDone?()   // app 正在退出：回调照发，别把退出流程挂住
+                    return
+                }
                 self.isApplying = false
                 if let message = result.1 { self.lastError = message }
                 self.refresh()
+                let done = self.pendingWhenDone
+                self.pendingWhenDone = nil
                 if let pending = self.pendingTarget {
                     self.pendingTarget = nil
                     if self.isEnabled != pending {
-                        self.setEnabled(pending)
+                        self.setEnabled(pending, whenDone: done)
+                    } else {
+                        done?()
                     }
+                } else {
+                    done?()
                 }
             }
         }

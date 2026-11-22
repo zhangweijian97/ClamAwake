@@ -7,7 +7,7 @@
 // 鼠标语义（0.3.4）：左键单击 = 打开菜单（内容与原 SwiftUI 菜单一致）；
 // 右键单击 = 直接切换保活（隐藏快捷键，不进菜单）。
 //
-// 菜单结构：状态段（含电源护栏）→ 保活开关 → 档位（插电/电池，闸常驻）→ 开机自启 → 退出。
+// 菜单结构：状态段（含电源护栏）→ 保活开关 → 档位（插电/电池）→ 开机自启 → 退出。
 // 状态持久化：保活开着时退出 app（例如合盖前误退），下次启动自动恢复保活（resumeKeepAliveOnLaunch）。
 // 托盘图标四态：护栏警示 = exclamationmark.triangle（保活中+电池+插电档），保活中 = bolt.circle.fill（实心），
 // 启动中 = bolt.circle（空心），未保活 = zzz（一眼可辨状态）。
@@ -16,9 +16,9 @@ import AppKit
 import Combine
 import IOKit.ps
 
-/// 保活档位（0.3.7 重构）：档位是机器的常驻配置，独立于保活开关——
-/// 插电档=保活只靠虚拟屏+断言（零密码）；电池档=系统级禁睡常驻（换档时拉/撤 pmset 闸各授权一次，
-/// 保活开关零密码）。电池合盖走硬件事件路径，断言与虚拟屏均挡不住（2026-11-21 实测），唯 pmset 全覆盖。
+/// 保活档位：插电档=保活只靠虚拟屏+断言（零密码）；电池档=保活时加 pmset 禁睡（进入 running 补闸、
+/// 保活停/失败撤闸，各弹一次授权；闸已在=免弹）。电池合盖走硬件事件路径，断言与虚拟屏均挡不住
+/// （2026-11-21 实测），唯 pmset 全覆盖。
 enum KeepAliveMode: String {
     case plugged
     case battery
@@ -32,17 +32,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         installSignalHandlers()
         statusBar.install()
+        // 启动恢复先于控制通道：命令端口一开就能读到 phase=starting，不会把「恢复还没起跑」误读成「没恢复」
+        statusBar.resumeKeepAliveIfNeeded()
         _ = control.start()   // 命令行控制通道（app 未运行时的 CLI 会先用 open 拉起本 app）
-        if UserDefaults.standard.bool(forKey: "resumeKeepAliveOnLaunch") {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                EngineController.shared.start()
-            }
-        }
     }
 
+    /// 退出前收尾：停引擎 + 撤闸（若在）。撤闸要弹授权窗，不能在同步返回里做完——
+    /// 挂起退出（terminateLater），授权落定后再回话（用户取消也照退，残留走下次启动的菜单出口）。
+    private var isTerminating = false
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        EngineController.shared.stop()
-        return .terminateNow
+        guard !isTerminating else { return .terminateLater }
+        isTerminating = true
+        statusBar.prepareForTermination {
+            // 回话排到下一拍：即使收尾同步完成（闸不在），reply 也必须发生在 return terminateLater 之后
+            DispatchQueue.main.async { NSApp.reply(toApplicationShouldTerminate: true) }
+        }
+        return .terminateLater
     }
 
     /// SIGINT / SIGTERM（kill、launchd 关停）也走清理路径：先停引擎子进程（屏随进程消失）再退出
@@ -103,6 +109,45 @@ final class StatusBarController: NSObject {
         engine.$phase
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.refreshIcon() }
+            .store(in: &cancellables)
+
+        // 闸的生灭跟着保活的 phase 变化沿走（0.3.6 语义，2026-11-22 goal-088256 恢复；0.3.7 档位重构
+        // 把这条链当「闸常驻」的实现细节删掉了）：活侧沿 → running 补闸；关侧沿 → 停/失败撤闸。
+        // 覆盖三路：用户主动关、引擎意外死、启动失败（启动失败时没拉过闸，撤 = 清历史残留）。
+        // 只看变化沿，app 启动时的初始 .stopped 不触发（存量残留只走菜单出口，避免开机自动弹授权窗）。
+        var lastPhase: EngineController.Phase = .stopped
+        engine.$phase
+            .receive(on: RunLoop.main)
+            .sink { [weak self] phase in
+                guard let self else { return }
+                let wasRunning: Bool
+                switch lastPhase {
+                case .running: wasRunning = true
+                default: wasRunning = false
+                }
+                let wasActive: Bool
+                switch lastPhase {
+                case .starting, .running: wasActive = true
+                default: wasActive = false
+                }
+                let nowRunning: Bool
+                switch phase {
+                case .running: nowRunning = true
+                default: nowRunning = false
+                }
+                let nowInactive: Bool
+                switch phase {
+                case .stopped, .failed: nowInactive = true
+                default: nowInactive = false
+                }
+                lastPhase = phase
+                if nowRunning, !wasRunning {
+                    // 进入 running 才补闸：建屏失败不弹（开保活＝此时才真正兑现「合盖不睡」）
+                    self.pullGuardIfNeeded()
+                } else if wasActive, nowInactive {
+                    self.releaseGuardIfNeeded()
+                }
+            }
             .store(in: &cancellables)
         refreshIcon()
 
@@ -186,21 +231,76 @@ final class StatusBarController: NSObject {
 
     private func setKeepAlive(_ on: Bool) {
         if on {
-            engine.start()
-            // 电池档完整性：保活开着承诺「合盖必不睡」，闸缺失时兑现不了——补拉（新用户首次开保活弹一次授权，
-            // 此后闸常驻、开关零密码）。resume 路径不补：pmset 持久，正常场景闸在；异常场景菜单状态行可见。
-            if keepAliveMode == .battery {
-                sleepGuard.refresh()
-                if !sleepGuard.isEnabled {
-                    sleepGuard.setEnabled(true)
-                }
-            }
-            UserDefaults.standard.set(true, forKey: "resumeKeepAliveOnLaunch")
+            startKeepAlive()
         } else {
-            engine.stop()
-            UserDefaults.standard.set(false, forKey: "resumeKeepAliveOnLaunch")
+            stopKeepAlive()
         }
         refreshIcon()
+    }
+
+    /// 开保活的唯一入口（菜单/右键/CLI/启动恢复共用）：只动引擎与持久化；
+    /// 闸由 phase 变化沿补（进入 running 时，见 install()），建屏失败就不弹授权。
+    private func startKeepAlive() {
+        engine.start()
+        UserDefaults.standard.set(true, forKey: "resumeKeepAliveOnLaunch")
+    }
+
+    /// 关保活：主动撤一次闸（幂等；闸已撤=免弹），其余两路（引擎意外死/启动失败）由 phase 变化沿兜底。
+    private func stopKeepAlive() {
+        engine.stop()
+        UserDefaults.standard.set(false, forKey: "resumeKeepAliveOnLaunch")
+        releaseGuardIfNeeded()
+    }
+
+    /// 电池档完整性：保活承诺「合盖必不睡」，闸缺失时兑现不了——补拉（弹一次授权；闸已在=免弹）
+    private func pullGuardIfNeeded() {
+        guard keepAliveMode == .battery else { return }
+        sleepGuard.refresh()
+        if !sleepGuard.isEnabled {
+            sleepGuard.setEnabled(true)
+        }
+    }
+
+    private func releaseGuardIfNeeded() {
+        sleepGuard.refresh()
+        if sleepGuard.isEnabled {
+            sleepGuard.setEnabled(false)
+        }
+    }
+
+    /// 启动恢复（resumeKeepAliveOnLaunch）：走与手动开保活同一条路径（同一状态机、同一持久化、同一补闸链）。
+    /// 建屏是瞬态动作，失败重试 2 次——只重试引擎启动，不重试授权窗（用户取消就不反复弹）。
+    func resumeKeepAliveIfNeeded() {
+        guard UserDefaults.standard.bool(forKey: "resumeKeepAliveOnLaunch") else { return }
+        startKeepAlive()
+        refreshIcon()
+        scheduleResumeRetry(remaining: 2)
+    }
+
+    private func scheduleResumeRetry(remaining: Int) {
+        guard remaining > 0 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            guard let self else { return }
+            guard case .failed = self.engine.phase else { return }
+            self.startKeepAlive()
+            self.scheduleResumeRetry(remaining: remaining - 1)
+        }
+    }
+
+    /// 退出前收尾：停引擎 + 撤闸（若在），授权结果落定后回调（quit 路径用它挂起退出）。
+    func prepareForTermination(_ completion: @escaping () -> Void) {
+        engine.stop()
+        if sleepGuard.isApplying {
+            // 有写入在飞（刚开保活弹的授权窗）：等它落定再按结果撤——授权成立就撤，用户取消则本就无闸
+            sleepGuard.setEnabled(false, whenDone: completion)
+            return
+        }
+        sleepGuard.refresh()
+        guard sleepGuard.isEnabled else {
+            completion()
+            return
+        }
+        sleepGuard.setEnabled(false, whenDone: completion)
     }
 
     // MARK: - 命令行控制（CFMessagePort 回调，主线程）
@@ -283,12 +383,11 @@ final class StatusBarController: NSObject {
         if let message = login.lastError { menu.addItem(caption(message)) }
         if let message = sleepGuard.lastError { menu.addItem(caption(message)) }
         if sleepGuard.isEnabled {
-            // 电池档合法态：闸常驻，保活关着也照常显示
             menu.addItem(caption("系统级禁睡：开"))
-            if keepAliveMode == .plugged {
-                // 插电档残留（切档取消/异常）：给恢复出口
-                menu.addItem(caption("⚠ 系统级禁睡仍开着（上次切档未完成）"))
-                let restore = NSMenuItem(title: "恢复睡眠默认", action: #selector(disableSleepGuard), keyEquivalent: "")
+            // 两种异常残留给恢复出口：插电档本不该有闸；保活没在跑时闸该随保活已经撤掉
+            if keepAliveMode == .plugged || !keepAliveOn {
+                menu.addItem(caption("⚠ 系统级禁睡仍开着（合盖不睡但屏幕会亮着）"))
+                let restore = NSMenuItem(title: "恢复系统睡眠默认", action: #selector(disableSleepGuard), keyEquivalent: "")
                 restore.target = self
                 restore.isEnabled = !sleepGuard.isApplying
                 menu.addItem(restore)
@@ -338,7 +437,7 @@ final class StatusBarController: NSObject {
         let quit = NSMenuItem(title: "退出 ClamAwake", action: #selector(quitApp), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
-        menu.addItem(caption("ClamAwake v0.3.7"))
+        menu.addItem(caption("ClamAwake v0.3.8"))
         return menu
     }
 
@@ -381,13 +480,14 @@ final class StatusBarController: NSObject {
         }
     }
 
-    /// 切换档位（菜单/CLI 同路径）。闸的生灭只发生在换档：
-    /// 切电池档 → 拉闸（弹一次授权；闸已在则免弹）；切插电档 → 撤闸（弹一次授权；闸已撤则免弹）。
+    /// 切换档位（菜单/CLI 同路径）。闸跟着保活走（0.3.6 语义恢复）：
+    /// 切电池档且保活开着 → 补闸（弹一次授权；闸已在则免弹）；切插电档 → 撤闸（弹一次授权；闸已撤则免弹）。
+    /// 切电池档而保活关着 → 不弹：闸的存在服务保活承诺，开保活时由 phase 变化沿补。
     private func setKeepAliveMode(_ mode: KeepAliveMode) {
         keepAliveMode = mode
         sleepGuard.refresh()
         if mode == .battery {
-            if !sleepGuard.isEnabled {
+            if engine.isProtecting && !sleepGuard.isEnabled {
                 sleepGuard.setEnabled(true)
             }
         } else if sleepGuard.isEnabled {
@@ -407,7 +507,7 @@ final class StatusBarController: NSObject {
         NSWorkspace.shared.open(LoginItemManager.loginItemsSettingsURL)
     }
 
-    /// 插电档残留出口：单独关闭系统级防睡（只在插电档而闸仍开时出现在菜单里——切档取消/异常残留）
+    /// 残留出口：单独关闭系统级防睡（插电档而闸仍开、或保活已停而闸仍开时出现在菜单里——撤闸被取消/异常遗留）
     @objc private func disableSleepGuard() {
         sleepGuard.setEnabled(false)
     }
