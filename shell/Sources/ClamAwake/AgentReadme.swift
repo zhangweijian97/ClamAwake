@@ -4,7 +4,7 @@ import Foundation
 // 转达比理解便宜：材料具体到句，怎么组织语言归 agent。文案改动须同步 SKILL.md 与 README agent 节（teach test 检漂移）。
 enum AgentReadme {
     static let text = """
-    # ClamAwake 智能体引导卡
+    # ClamAwake 智能体说明书
 
     > 产品给智能体的课：三时刻三件套（该说/该做/禁言）+ 失败退路 + 验收。
     > 材料与边界在这里，怎么组织语言归你。缺材料时宁可少说，不编造。

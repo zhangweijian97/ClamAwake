@@ -1,7 +1,7 @@
 #!/bin/sh
 # ClamAwake 单命令安装：curl -fsSL https://github.com/zhangweijian97/ClamAwake/releases/latest/download/install.sh | sh
 # 用法：sh install.sh [本地DMG路径]   （传本地路径=离线安装，供测试；curl|sh 管道形态无参数）
-# 行为契约：装 → 拉起 → readme（输出智能体版 README）
+# 行为契约：装 → 拉起 → readme（输出智能体说明书，动手前先读）
 set -e
 
 DMG_URL="https://github.com/zhangweijian97/ClamAwake/releases/latest/download/ClamAwake.dmg"

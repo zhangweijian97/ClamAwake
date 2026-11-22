@@ -185,7 +185,7 @@ DSH 插件已独立成仓：[zhangweijian97/dsh-clamawake](https://github.com/zh
 
 面向自动化调用的精确契约。两条约定贯穿始终：**stdout 只放机器可读结果**（屏 id / `mirrored` / `unmirrored` / 读数 / doctor 的 `check=` 行）；**诊断与可执行恢复动作走 stderr**。分支判断依据 = 退出码 + stdout，不要解析 stderr 文案（stderr 目前是中文诊断，人读的）。
 
-智能体版 README（运行时课的本体）：`ClamAwake readme`——装机后即可取；本节（README 文件）是路标。
+智能体说明书（动手前先读，运行时课的本体）：`ClamAwake readme`——装机后即可取；本节（README 文件）是路标。
 
 ### 安装（agent 可直接执行）
 
@@ -232,7 +232,7 @@ hdiutil detach "/Volumes/ClamAwake"
 
 选档规则：用户在电池上也要合盖不睡 → `battery`，把管理员授权那一步交回用户；只是插电跑任务 → `plugged`。
 
-`ClamAwake readme` ——输出智能体版 README（三时刻最小集+禁言单+验收，运行时面）。
+`ClamAwake readme` ——输出智能体说明书（动手前先读；三时刻最小集+禁言单+验收，运行时面）。
 
 ### 退出码语义（以源码与实测为准）
 
