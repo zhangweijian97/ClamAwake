@@ -25,8 +25,8 @@ Three steps:
 Click the menu bar icon → "Start Lid-Closed No-Sleep", done. From then on, closing the lid: the machine keeps running your tasks while the screen stays off. Click "Stop Lid-Closed No-Sleep" or quit the app to restore.
 
 - **Right-click the menu bar icon** to start/stop Lid-Closed No-Sleep directly (hidden shortcut; left-click still opens the menu);
-- **No-sleep range**: under "Start Lid-Closed No-Sleep" the menu offers two options — **Never sleep** by default: the first time you start, one admin authorization enables a system-level sleep disable — from then on, toggling needs no password, and a closed lid never sleeps, plugged in or on battery; the computer rarely leaves the desk? Choose **Only when plugged in** (zero passwords, no system settings touched);
-- Authorization follows the selected range: "Never sleep" pops an admin dialog only when the sleep-disable guard is absent (the first start, or a switch re-enabling it); once the guard is in place, toggling needs no password; "Only when plugged in" never pops an authorization dialog (the virtual display mirror + caffeinate assertion come and go with the switch, structurally nothing left behind). No terminal needed at any point.
+- **No-sleep range**: under "Start Lid-Closed No-Sleep" the menu offers two options — **Never sleep** by default: starting and stopping each pop one admin authorization (skipped when the guard is already in place) — the system-level sleep disable comes and goes with the switch, so stopping truly restores default sleep, and a closed lid never sleeps, plugged in or on battery; the computer rarely leaves the desk? Choose **Only when plugged in** (zero passwords, no system settings touched);
+- Authorization follows the selected range: "Never sleep" pops an admin dialog on each start/stop toggle (skipped when the guard is already in place); the system-level sleep disable comes and goes with the switch; "Only when plugged in" never pops an authorization dialog (the virtual display mirror + caffeinate assertion come and go with the switch, structurally nothing left behind). No terminal needed at any point.
 - For auto-start: enable "Launch at Login" in the menu;
 - To uninstall: quit the app, then move ClamAwake from Applications to the Trash. No leftovers. If you chose "Never sleep", switch to "Only when plugged in" before uninstalling (this removes the system-level sleep disable), or run `sudo pmset -a disablesleep 0` manually.
 - **Promise grading**: "lid closed = no sleep" is guaranteed by "Never sleep" (mechanism level); "Only when plugged in" behavior has been field-tested for days on a 16-inch MacBook Pro (M-series); behavior may differ on other models / macOS versions — if the machine still sleeps with the lid closed, please open an issue (attach recent `pmset -g log` output).
@@ -53,7 +53,7 @@ The menu bar app itself can be driven from the command line: commands are sent t
 /Applications/ClamAwake.app/Contents/MacOS/ClamAwake stop
 /Applications/ClamAwake.app/Contents/MacOS/ClamAwake toggle      # same as right-click
 /Applications/ClamAwake.app/Contents/MacOS/ClamAwake login on|off
-/Applications/ClamAwake.app/Contents/MacOS/ClamAwake mode plugged|battery   # battery = Never sleep (one-time auth, persistent system-level sleep disable); plugged = Only when plugged in
+/Applications/ClamAwake.app/Contents/MacOS/ClamAwake mode plugged|battery   # battery = Never sleep (each toggle needs one admin auth, guard comes and goes with the switch); plugged = Only when plugged in
 ```
 
 If the app is not running, every command except `quit` launches it first (`open -b com.clamawake.app`). Output is `key=value` lines, easy to consume from scripts.
@@ -227,7 +227,7 @@ hdiutil detach "/Volumes/ClamAwake"
 
 | Value | Actual meaning | Authorization |
 |---|---|---|
-| `mode battery` (default) | **never sleep on any power source** | one admin approval by the human (once) |
+| `mode battery` (default) | **never sleep on any power source** | one admin approval on each start/stop toggle (you cannot type the password) |
 | `mode plugged` | **only while on AC power** | none |
 
 Pick: user needs lid-closed on battery too → `battery` (hand the admin approval to the user); plugged-in workloads only → `plugged`.

@@ -406,7 +406,7 @@ final class StatusBarController: NSObject {
                               action: #selector(toggleKeepAlive), keyEquivalent: "")
         keep.target = self
         menu.addItem(keep)
-        let batteryItem = NSMenuItem(title: "任何情况都不睡（授权一次）",
+        let batteryItem = NSMenuItem(title: "任何情况都不睡（开关时需授权）",
                                      action: #selector(chooseBatteryMode), keyEquivalent: "")
         batteryItem.target = self
         batteryItem.indentationLevel = 1
