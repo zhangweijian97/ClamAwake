@@ -152,3 +152,6 @@ launchd 那一支没落地也无需落地——同一条用户价值（重启后
 ## 2026-11-22 晚 0.3.8：授权语义回退（闸随保活生灭）+ 撤闸链修复
 
 用户体感「开关不需要密码」触发调查：0.3.7 档位重构（0fda577）主动删除 phase 观察 sink（闸常驻，密码只在换档——当时为解决 0.3.5 每次开关弹窗的痛点，实施单有记录）——**有意识设计，不是 bug**；但闸常驻的代价在 agent 面出现后暴露：①关保活后 SleepDisabled=1 残留，用户「关掉=恢复默认睡眠」预期被违背；②agent 收尾判据失效（protecting=no 不等于系统干净）。**决策：回退到闸随保活生灭**（5b92336+7eedbd8）：开关各弹一次授权（闸已在免弹）、换装弹两次；stop/quit/引擎意外死三路撤闸（phase 变化沿统一触发，quit 挂起退出）；quit 清 resume 键（用户主动退出的正确语义），换装恢复职责归 install.sh（quit 前记 protecting，重开后 start 恢复——受弹窗时序影响，agent 兜底句已进说明书安装段「装完确认 protecting=yes」）。文案六处对齐（usage/菜单/SKILL/README 中英/guide 卡收尾判据=protecting=no 且 sleep_guard=off 才算收干净）。实弹验证：stop 撤闸 1→0 过。HANDOFF 0.3.7 段缺档位重构记录（0fda577）——本段补记。
+
+## 2026-11-22 深夜 0.3.8 后续四连修（goal-088256 链+goal-1e0095）
+授权语义回退后连续修复：①关闭原子化（50397cc，先撤闸后停引擎，不允许=回滚）②setEnabled 主路径接住 whenDone（0ea6205，撤闸成功但 finishStop 不执行的一行修复）③开启原子化（f6dbecd，对称回滚+切档防御）④**两拍授权预告协议**（ac5d190，goal-1e0095：battery 档 stop/start/toggle 将弹窗时第一拍输出 needs_user_auth=yes+exit 5 不弹窗，agent 转达用户后 5 分钟内同命令重跑才真正弹窗；install.sh 同协议；mode/quit 未覆盖留观察）。三步实弹（关闭侧）全过；两拍第二拍实弹与 mode/quit 覆盖留验。**抽验判例：验两拍分流必须新 app 实例接控制端口——新 CLI 对装着的旧 app 发命令会绕过分流直触弹窗（本次抽验事故：多弹一次窗，已清）**。
