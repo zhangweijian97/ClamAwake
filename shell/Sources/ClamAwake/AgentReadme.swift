@@ -1,8 +1,8 @@
 import Foundation
 
-// ClamAwake agent 引导卡（goal-bf4501 to A 通道）——产品给智能体的课：三时刻三件套+失败退路+验收。
+// ClamAwake 智能体版 README（readme 命令输出，goal-bf4501 to A 通道）——产品给智能体的课：三时刻三件套+失败退路+验收。
 // 转达比理解便宜：材料具体到句，怎么组织语言归 agent。文案改动须同步 SKILL.md 与 README agent 节（teach test 检漂移）。
-enum AgentGuide {
+enum AgentReadme {
     static let text = """
     # ClamAwake 智能体引导卡
 

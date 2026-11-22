@@ -78,8 +78,8 @@ enum ControlCLI {
       login on|off          开机自启
       mode plugged|battery  合盖不睡眠范围（plugged=只在充电时不睡；battery=任何情况都不睡，首次授权一次）
       quit                  退出 app
-      guide                 输出智能体引导卡（agent 材料与边界；纯本地输出，不拉起 app）
-    说明：命令发给正在运行的 ClamAwake.app；未运行时自动先拉起（除 quit 外，guide 纯本地输出）。
+      readme                输出智能体版 README（agent 材料与边界；纯本地输出，不拉起 app）
+    说明：命令发给正在运行的 ClamAwake.app；未运行时自动先拉起（除 quit 外，readme 纯本地输出）。
     """
 
     static func run(_ args: [String]) -> Int32? {
@@ -114,9 +114,9 @@ enum ControlCLI {
             command = "mode \(target)"
         case "quit":
             command = "quit"
-        case "guide":
+        case "readme":
             // 纯本地输出：不发控制端口、不拉起 app，直接返回
-            AgentGuide.print_()
+            AgentReadme.print_()
             return 0
         case "help", "-h", "--help":
             print(usageText)

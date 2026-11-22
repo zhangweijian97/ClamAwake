@@ -185,6 +185,8 @@ The engine ships with this app; the plugin repository holds code only — instal
 
 The precise contract for automated invocation. Two conventions hold throughout: **stdout carries only machine-readable results** (display ids / `mirrored` / `unmirrored` / readings / doctor's `check=` lines); **diagnostics and executable recovery actions go to stderr**. Branch on exit code + stdout; never parse stderr text (stderr diagnostics are currently in Chinese — written for humans).
 
+Agent README (the runtime lesson itself): `ClamAwake readme` — available right after install; this section (the README file) is the signpost.
+
 ### Install (agents can do this)
 
 The same `.app` users install — you can install it too, without sudo or an interactive terminal:
@@ -230,7 +232,7 @@ hdiutil detach "/Volumes/ClamAwake"
 
 Pick: user needs lid-closed on battery too → `battery` (hand the admin approval to the user); plugged-in workloads only → `plugged`.
 
-`ClamAwake guide` — prints the agent guide card (three moments: minimal script + taboo list + acceptance criteria; the runtime layer).
+`ClamAwake readme` — prints the agent-facing README (three moments: minimal script + taboo list + acceptance criteria; the runtime layer).
 
 ### Exit code semantics (per source code and live measurement)
 

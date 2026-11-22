@@ -82,5 +82,5 @@ hdiutil detach "/Volumes/ClamAwake"
 
 ## 完整契约
 
-退出码、stdout/stderr 约定、doctor 输出格式，安装、决策表、验证阶梯、收尾，以及 guide 命令（运行时引导卡）见仓库 README 的「For AI agents」节：
+退出码、stdout/stderr 约定、doctor 输出格式，安装、决策表、验证阶梯、收尾，以及 readme 命令（智能体版 README）见仓库 README 的「For AI agents」节：
 https://github.com/zhangweijian97/ClamAwake#for-ai-agents
