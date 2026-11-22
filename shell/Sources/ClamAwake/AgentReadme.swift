@@ -6,7 +6,7 @@ enum AgentReadme {
     static let text = """
     # ClamAwake 智能体说明书
 
-    > 产品给智能体的课：三时刻三件套（该说/该做/禁言）+ 失败退路 + 验收。
+    > 这份说明书教你把 ClamAwake 装好、开好、收好——以及哪些话该对用户说、哪些不许说。
     > 材料与边界在这里，怎么组织语言归你。缺材料时宁可少说，不编造。
 
     ## 时刻一·开启前
@@ -46,7 +46,9 @@ enum AgentReadme {
     - 环境 unsupported（私有类缺失）：这台机器不支持，如实报，不换机器强试
 
     ## 验收（产品对智能体的期待）
-    用户全程只说需求与回答，没有一句操作指令；你对用户说的话不超过本卡最小集。
+    用户全程只说需求与回答，没有一句操作指令；你对用户说的话不超过本说明书最小集。
+
+    这份材料随时跑 `ClamAwake readme` 重取；退出码、stdout 约定等完整契约见仓库 README 的「For AI agents」节：https://github.com/zhangweijian97/ClamAwake#for-ai-agents
     """
 
     static func print_() {

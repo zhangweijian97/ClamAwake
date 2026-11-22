@@ -71,6 +71,7 @@ enum ControlClient {
 enum ControlCLI {
     static let usageText = """
     用法: ClamAwake <命令>
+    ★ 智能体：动手前先跑 `ClamAwake readme`（智能体说明书）
       status                打印当前状态（phase/protecting/display_id/login/sleep_guard/mode/power）
       start [--wait]        开启合盖不睡眠（--wait 等到建屏完成或失败再返回）
       stop                  停止合盖不睡眠
@@ -78,7 +79,7 @@ enum ControlCLI {
       login on|off          开机自启
       mode plugged|battery  合盖不睡眠范围（plugged=只在充电时不睡；battery=任何情况都不睡，首次授权一次）
       quit                  退出 app
-      readme                输出智能体说明书（动手前先读；agent 材料与边界，纯本地输出不拉起 app）
+      readme                输出智能体说明书（agent 材料与边界；纯本地输出）
     说明：命令发给正在运行的 ClamAwake.app；未运行时自动先拉起（除 quit 外，readme 纯本地输出）。
     """
 
