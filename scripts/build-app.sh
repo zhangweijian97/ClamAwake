@@ -15,6 +15,13 @@ DIST="$ROOT/dist"
 APP="$DIST/ClamAwake.app"
 APP_VERSION="0.3.8"
 
+# 版本对账闸（0.3.8 实装发现：引擎版本常量独立定义在 src/vd-engine.swift，bump 时易漏）
+ENGINE_VERSION=$(grep -m1 'let engineVersion' "$ROOT/src/vd-engine.swift" | sed 's/.*= *"\(.*\)"/\1/')
+if [ "$APP_VERSION" != "$ENGINE_VERSION" ]; then
+  echo "构建中止：APP_VERSION($APP_VERSION) 与引擎版本常量($ENGINE_VERSION) 不一致——src/vd-engine.swift 的 engineVersion 未随版本 bump" >&2
+  exit 1
+fi
+
 echo "==> [1/4] 编译菜单栏壳（SwiftPM release）"
 swift build --package-path "$ROOT/shell" -c release
 
