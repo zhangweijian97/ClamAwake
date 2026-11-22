@@ -44,6 +44,8 @@ hdiutil detach "/Volumes/ClamAwake"
 
 `start --wait` 只等到建屏完成；电池档随后还会弹授权窗：允许=保活生效（`status` 读 `protecting=yes` 且 `sleep_guard=on`）；不允许=保活不会开启（回到关闭态），想开再 `start` 一次。
 
+**授权两拍**：电池档的 `start`/`stop` 若将弹授权窗，**首跑不执行、不弹窗**——stdout 输出 `needs_user_auth=yes` 与 `prompt_text=`，退出码 5。把 `prompt_text` 的原话转达用户、等他说准备好，再重跑同一条命令（5 分钟内有效）——第二拍才真正弹窗；跳过转达直接重跑=预告失效，用户会被突然的弹窗打断。闸已是目标值（免弹路径）不进两拍，直接执行。
+
 ## 模式（名字反直觉，按覆盖范围起名）
 
 | 值 | 真实语义 | 授权 |
@@ -79,6 +81,7 @@ hdiutil detach "/Volumes/ClamAwake"
 ## 失败处理
 
 - `start` 后 `phase=failed`：读 `error` 行。常见三种——私有类缺失（本机不支持）、分辨率组合被拒（换 1920x1080 再试）、3 秒未上线（重试一次，仍失败跑 doctor）；
+- 退出码 5（授权预告）：不是成功也不是失败——把 `prompt_text` 原话转达用户后重跑；超过 5 分钟重跑=预告过期，会重新出预告；
 - doctor 的 `lid_sleep` 是 warn：需要人类执行 `sudo pmset -a disablesleep 1`，或让用户切到 `battery` 档由应用请求授权——**不要自己尝试 sudo**；
 - 已在跑（`keepalive_running` warn 或存在 `kya=yes` 的屏）：复用，不要重复建屏。
 

@@ -15,6 +15,47 @@ enum ControlChannel {
     static let portName = "com.clamawake.app.control"
 }
 
+/// 两拍授权预告（goal-1e0095）：会弹管理员授权窗的命令，第一拍只回预告、不执行——
+/// 「弹窗之前必须先转达用户」由 stdout + 退出码钉进 agent 的必经路径，不再靠记得。
+/// 预告时写 UserDefaults 标记；5 分钟内重跑同一条命令（第二拍）才真正执行（弹窗）。
+/// 标记键与窗口期被 install.sh 复用（shell 侧 defaults 读写同一 domain）。
+enum ControlAuth {
+    static let announcedAtKey = "authAnnouncedAt"
+    static let announcedActionKey = "authAnnouncedAction"
+    static let window: TimeInterval = 300
+    static let needsUserAuthPrefix = "needs_user_auth=yes"
+
+    /// 第二拍判定：5 分钟内有预告记录，且记录的命令与本次相同
+    /// （无 action 记录 = 通配——install.sh 只写时间戳的形态）
+    static func announced(for request: String) -> Bool {
+        let at = UserDefaults.standard.double(forKey: announcedAtKey)
+        guard at > 0 else { return false }
+        let age = Date().timeIntervalSince1970 - at
+        guard age >= 0, age <= window else { return false }
+        if let action = UserDefaults.standard.string(forKey: announcedActionKey), action != request {
+            return false
+        }
+        return true
+    }
+
+    /// 第一拍：记下「已预告」标记（时间戳 + 命令）
+    static func announce(for request: String) {
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: announcedAtKey)
+        UserDefaults.standard.set(request, forKey: announcedActionKey)
+    }
+
+    /// 第二拍消费：用毕即清，别把本次预告留给下一个动作蹭
+    static func consume() {
+        UserDefaults.standard.removeObject(forKey: announcedAtKey)
+        UserDefaults.standard.removeObject(forKey: announcedActionKey)
+    }
+
+    /// 第一拍的 stdout（CLI 原样打印 + 退出码 5）
+    static func preview(prompt: String) -> String {
+        "\(needsUserAuthPrefix)\nprompt_text=\(prompt)"
+    }
+}
+
 /// app 侧：常驻控制端口（回调跑在主线程 run loop，可直接改 UI 状态）
 final class ControlPortServer {
     private var port: CFMessagePort?
@@ -80,7 +121,7 @@ enum ControlCLI {
       mode plugged|battery  合盖不睡眠范围（plugged=只在充电时不睡；battery=任何情况都不睡（开关时各需一次管理员授权，闸已在时免弹））
       quit                  退出 app
       readme                输出智能体说明书（agent 材料与边界；纯本地输出）
-    说明：命令发给正在运行的 ClamAwake.app；未运行时自动先拉起（除 quit 外，readme 纯本地输出）。
+    说明：命令发给正在运行的 ClamAwake.app；未运行时自动先拉起（除 quit 外，readme 纯本地输出）。battery 档开关首跑返回退出码 5（授权预告），转达用户后重跑生效。
     """
 
     static func run(_ args: [String]) -> Int32? {
@@ -140,6 +181,12 @@ enum ControlCLI {
         guard let firstReply = reply else {
             FileHandle.standardError.write(Data("控制端口不可达（ClamAwake.app 未运行且拉起失败）\n".utf8))
             return 3
+        }
+
+        // 两拍授权预告的第一拍：app 只回了预告没执行——原样打印（agent 转达用户），退出码 5
+        if firstReply.hasPrefix(ControlAuth.needsUserAuthPrefix) {
+            print(firstReply)
+            return 5
         }
 
         var output = firstReply

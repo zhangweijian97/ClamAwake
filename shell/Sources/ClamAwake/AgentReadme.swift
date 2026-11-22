@@ -18,6 +18,7 @@ enum AgentReadme {
     **该做（命令与读数，按序）**
     - 装（一条命令，用户零点击）：`curl -fsSL https://github.com/zhangweijian97/ClamAwake/releases/latest/download/install.sh | sh`
     - 先判档再开（顺序重要——start 用当前档位，不判情境）：按用户原话与 `status` 的 `power` 读数选档，`mode plugged|battery` 切好档**再** `start --wait`。插电跑任务→`mode plugged`（零授权）；用户明说电池上也要保→`mode battery`（需授权，先转达授权预告）。原话未提电池且当前插电→先 plugged，并告知一句：「以后电池上也要保的话说一声，会需要一次授权。」
+    - 授权两拍（电池档开关必读）：`start`/`stop` 若将弹授权窗，**首跑不执行、不弹窗**——输出 `needs_user_auth=yes` 与 `prompt_text=`，退出码 5。先把 `prompt_text` 里的原话转达用户，等他说准备好，再重跑同一条命令（5 分钟内有效）——第二拍才真正弹窗。跳过转达直接重跑=预告失效，用户会被突然的弹窗打断。
     - 验：同路径 `status`，读 `protecting=yes`（读数，不是感觉）
 
     **该停（禁言单）**
@@ -42,6 +43,7 @@ enum AgentReadme {
 
     ## 失败退路
     - start 后 phase=failed：读 error 行，重试一次仍败跑 doctor
+    - 退出码 5（授权预告）：不是成功也不是失败——按上面「授权两拍」转达用户后重跑；超过 5 分钟重跑=预告过期，会重新出预告
     - 开启时授权弹窗被取消：保活不会开启（回到关闭态，维持原样）——想开再 start 一次并请用户输密码；插电档零授权随时可用
     - 环境 unsupported（私有类缺失）：这台机器不支持，如实报，不换机器强试
 

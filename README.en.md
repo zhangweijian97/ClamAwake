@@ -234,6 +234,15 @@ Pick: user needs lid-closed on battery too → `battery` (hand the admin approva
 
 Battery-mode start pops the auth dialog: Allow = keep-alive takes effect (`status` shows `protecting=yes` and `sleep_guard=on`); Don't Allow = the keep-alive does not start (back to the off state) — run `start` again to retry.
 
+### Authorization handshake (exit code 5)
+
+`start` / `stop` that would pop the admin authorization dialog (battery mode and the guard needs to change) take two rounds:
+
+1. The first run **does not execute and pops nothing**: stdout prints `needs_user_auth=yes` and `prompt_text=…`, exit code **5**;
+2. Relay the `prompt_text` wording to the user, wait until they say they are ready, then re-run the same command (valid for 5 minutes) — only this second round actually executes and pops the dialog.
+
+Re-running without relaying defeats the announcement: the user gets an unexpected password prompt. Re-running after 5 minutes starts a fresh first round. If the guard is already at the target value (dialog-free path) the command skips the handshake and runs directly. `install.sh`'s quit-time guard release / post-install guard pull announce the same way (exit code 5).
+
 `ClamAwake readme` — prints the agent manual (read it first; three moments: minimal script + taboo list + acceptance criteria; the runtime layer).
 
 ### Exit code semantics (per source code and live measurement)

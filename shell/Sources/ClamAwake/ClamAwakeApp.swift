@@ -338,8 +338,44 @@ final class StatusBarController: NSObject {
 
     // MARK: - 命令行控制（CFMessagePort 回调，主线程）
 
+    /// 两拍授权预告（goal-1e0095，CLI 专用）：这条命令会不会弹管理员授权窗？
+    /// 会 → 第一拍只回预告、不执行（写标记）；5 分钟内重跑同一条命令（第二拍）才放行原逻辑去弹窗。
+    /// 免弹路径（闸已是目标值）不在两拍内：直接照常执行。
+    private func authPreviewReply(for request: String) -> String? {
+        guard let prompt = guardPrompt(for: request) else { return nil }
+        if ControlAuth.announced(for: request) {
+            ControlAuth.consume()
+            return nil
+        }
+        ControlAuth.announce(for: request)
+        return ControlAuth.preview(prompt: prompt)
+    }
+
+    /// 「这条命令将弹授权窗」的判定——与实际弹窗条件对齐：只有电池档需要系统级禁睡；
+    /// 闸已是目标值 = 免弹（setEnabled 的 no-op 分支），不进两拍。
+    private func guardPrompt(for request: String) -> String? {
+        let wantsStart: Bool
+        switch request {
+        case "start": wantsStart = true
+        case "stop": wantsStart = false
+        case "toggle": wantsStart = !keepAliveOn
+        default: return nil
+        }
+        guard keepAliveMode == .battery else { return nil }
+        sleepGuard.refresh()
+        if wantsStart {
+            // 已开/启动中 = 空操作（引擎 start 幂等，无 phase 沿就不补闸）
+            guard !keepAliveOn, !sleepGuard.isEnabled else { return nil }
+            return "即将弹出管理员授权窗：请先告知用户「输密码以允许合盖不睡眠」，用户准备好后重新执行本命令"
+        }
+        // 关：闸在（或写入在途）才要授权撤闸；闸不在 = 直接停，无弹窗
+        guard sleepGuard.isEnabled || sleepGuard.isApplying else { return nil }
+        return "即将弹出管理员授权窗：请先告知用户「输密码以恢复系统默认睡眠」，用户准备好后重新执行本命令"
+    }
+
     /// 命令行命令 → 与菜单/右键完全相同的功能路径（返回状态文本）
     func handle(controlCommand request: String) -> String {
+        if let preview = authPreviewReply(for: request) { return preview }
         switch request {
         case "status":
             return statusReport()
