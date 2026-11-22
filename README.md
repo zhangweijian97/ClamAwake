@@ -190,6 +190,10 @@ DSH 插件已独立成仓：[zhangweijian97/dsh-clamawake](https://github.com/zh
 普通用户装的那份 `.app`，你也可以装——不用 sudo，不用终端交互：
 
 ```sh
+# 单命令安装（首选）：
+curl -fsSL https://github.com/zhangweijian97/ClamAwake/releases/latest/download/install.sh | sh
+
+# DMG 手动安装（备选，单命令不可用时）：
 # 已经装过就跳过，别覆盖正在运行的应用
 test -d /Applications/ClamAwake.app && echo installed
 
@@ -225,6 +229,8 @@ hdiutil detach "/Volumes/ClamAwake"
 | `mode plugged` | **只在充电时不睡**（电池上合盖会睡） | 全程零授权 |
 
 选档规则：用户在电池上也要合盖不睡 → `battery`，把管理员授权那一步交回用户；只是插电跑任务 → `plugged`。
+
+`ClamAwake guide` ——输出 agent 引导卡（三时刻最小集+禁言单+验收，运行时面）。
 
 ### 退出码语义（以源码与实测为准）
 

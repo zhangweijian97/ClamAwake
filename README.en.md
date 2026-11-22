@@ -190,6 +190,10 @@ The precise contract for automated invocation. Two conventions hold throughout: 
 The same `.app` users install — you can install it too, without sudo or an interactive terminal:
 
 ```sh
+# one-command install (preferred):
+curl -fsSL https://github.com/zhangweijian97/ClamAwake/releases/latest/download/install.sh | sh
+
+# manual DMG install (fallback, when the one-command path is unavailable):
 # skip if already installed; never overwrite an app that is running
 test -d /Applications/ClamAwake.app && echo installed
 
@@ -225,6 +229,8 @@ hdiutil detach "/Volumes/ClamAwake"
 | `mode plugged` | **only while on AC power** | none |
 
 Pick: user needs lid-closed on battery too → `battery` (hand the admin approval to the user); plugged-in workloads only → `plugged`.
+
+`ClamAwake guide` — prints the agent guide card (three moments: minimal script + taboo list + acceptance criteria; the runtime layer).
 
 ### Exit code semantics (per source code and live measurement)
 

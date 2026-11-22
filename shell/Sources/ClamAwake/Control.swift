@@ -113,6 +113,10 @@ enum ControlCLI {
             command = "mode \(target)"
         case "quit":
             command = "quit"
+        case "guide":
+            // 纯本地输出：不发控制端口、不拉起 app，直接返回
+            AgentGuide.print_()
+            return 0
         case "help", "-h", "--help":
             print(usageText)
             return 0

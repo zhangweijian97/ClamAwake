@@ -13,7 +13,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DIST="$ROOT/dist"
 APP="$DIST/ClamAwake.app"
-APP_VERSION="0.3.7"
+APP_VERSION="0.3.8"
 
 echo "==> [1/4] 编译菜单栏壳（SwiftPM release）"
 swift build --package-path "$ROOT/shell" -c release

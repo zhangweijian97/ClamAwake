@@ -18,6 +18,10 @@ description: 当用户想让 Mac 合盖后继续运行（跑 AI 任务、下载�
 ```sh
 test -d /Applications/ClamAwake.app && echo installed   # 已装就跳过
 
+# 单命令安装（首选）：
+curl -fsSL https://github.com/zhangweijian97/ClamAwake/releases/latest/download/install.sh | sh
+
+# DMG 手动安装（备选，单命令不可用时）：
 curl -L -o /tmp/ClamAwake.dmg https://github.com/zhangweijian97/ClamAwake/releases/latest/download/ClamAwake.dmg
 hdiutil attach /tmp/ClamAwake.dmg -nobrowse -readonly
 cp -R "/Volumes/ClamAwake/ClamAwake.app" /Applications/
@@ -78,5 +82,5 @@ hdiutil detach "/Volumes/ClamAwake"
 
 ## 完整契约
 
-退出码、stdout/stderr 约定、doctor 输出格式见仓库 README 的「For AI agents」节：
+退出码、stdout/stderr 约定、doctor 输出格式，安装、决策表、验证阶梯、收尾，以及 guide 命令（运行时引导卡）见仓库 README 的「For AI agents」节：
 https://github.com/zhangweijian97/ClamAwake#for-ai-agents
