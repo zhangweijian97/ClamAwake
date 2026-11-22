@@ -317,7 +317,7 @@ kill -TERM "$ENGINE_PID"
 ### Cleanup (leave no residue)
 
 - Sessions you started, you stop: task done or user says "that's enough" → `stop`;
-- Done when `status` shows `protecting=no` and `vd-engine list` has no `kya=yes` display;
+- Done when `status` shows `protecting=no` **and** `sleep_guard=off`, and `vd-engine list` has no `kya=yes` display; on battery mode `stop` pops the auth dialog: password = clean stop, "Don't Allow" = nothing happened (keep-alive continues), stop again to retry;
 - Quit the app with `ClamAwake quit` (takes the keep-alive down with it);
 - Never `kill` other vd-engine processes — they may belong to the menu-bar app or another tool.
 

@@ -313,7 +313,7 @@ kill -TERM "$ENGINE_PID"
 ### 收尾（不要留残留）
 
 - 你开的保活由你关：任务结束或用户说「可以了」→ `stop`；
-- 收尾判据：`status` 的 `protecting=no`，且 `vd-engine list` 里没有 `kya=yes` 的屏；
+- 收尾判据：`status` 的 `protecting=no` **且** `sleep_guard=off`，且 `vd-engine list` 里没有 `kya=yes` 的屏；电池档 stop 会弹授权窗：输密码=关干净，点不允许=关闭没有发生（保活继续），想关再 stop 一次；
 - 退出应用用 `ClamAwake quit`（会连同保活一起收掉）；
 - 不要 `kill` 别的 vd-engine 进程——那可能是菜单栏应用或另一个工具建的屏。
 

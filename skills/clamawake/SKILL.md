@@ -69,8 +69,8 @@ hdiutil detach "/Volumes/ClamAwake"
 
 ## 收尾（不要留残留）
 
-- 你开的保活由你关：任务结束或用户说「可以了」→ `stop`；
-- 收尾判据：`status` 的 `protecting=no`，且 `vd-engine list` 里没有 `kya=yes` 的屏；
+- 你开的保活由你关：任务结束或用户说「可以了」→ `stop`；电池档会弹授权窗：输密码=关干净（`protecting=no` 且 `sleep_guard=off`），点不允许=关闭没有发生、保活还在跑，想关再 stop 一次；
+- 收尾判据：`status` 的 `protecting=no` **且** `sleep_guard=off`，且 `vd-engine list` 里没有 `kya=yes` 的屏；
 - 退出应用用 `quit`（会连同保活一起收掉）；
 - 不要 `kill` 别人的 vd-engine 进程——可能是菜单栏应用或另一个工具建的屏。
 
