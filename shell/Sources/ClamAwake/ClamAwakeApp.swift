@@ -113,7 +113,8 @@ final class StatusBarController: NSObject {
 
         // 闸的生灭跟着保活的 phase 变化沿走（0.3.6 语义，2026-11-22 goal-088256 恢复；0.3.7 档位重构
         // 把这条链当「闸常驻」的实现细节删掉了）：活侧沿 → running 补闸；关侧沿 → 停/失败撤闸。
-        // 覆盖三路：用户主动关、引擎意外死、启动失败（启动失败时没拉过闸，撤 = 清历史残留）。
+        // 关侧沿兜底两路：引擎意外死、启动失败（启动失败时没拉过闸，撤 = 清历史残留）。
+        // 用户主动关走 stopKeepAlive 的原子序（先撤闸后停引擎），到这条沿时闸已撤=幂等空操作。
         // 只看变化沿，app 启动时的初始 .stopped 不触发（存量残留只走菜单出口，避免开机自动弹授权窗）。
         var lastPhase: EngineController.Phase = .stopped
         engine.$phase
@@ -245,11 +246,33 @@ final class StatusBarController: NSObject {
         UserDefaults.standard.set(true, forKey: "resumeKeepAliveOnLaunch")
     }
 
-    /// 关保活：主动撤一次闸（幂等；闸已撤=免弹），其余两路（引擎意外死/启动失败）由 phase 变化沿兜底。
+    /// 关保活（原子）：电池档且闸在 = 先撤闸、后停引擎——撤闸被取消 → 整个关闭回滚
+    /// （保活照跑、图标仍是开启态、resume 键不动）；闸不在（插电档或闸已撤）= 直接停，无弹窗路径。
+    /// 撤闸弹窗期间引擎还在跑，图标保持开启态；授权落定（whenDone）才决定是否真的关。
+    /// 其余两路（引擎意外死/启动失败）不在这里：引擎已死无法回滚，由 phase 变化沿兜底。
     private func stopKeepAlive() {
+        sleepGuard.refresh()
+        // isApplying 也算「闸在途」：写入飞行中（如刚开就关）排进 pendingTarget 接续链——
+        // 否则刷新读数还是旧值（未落闸）时直接停引擎，写入完成后闸落下，就是半关闭态。
+        guard keepAliveMode == .battery, sleepGuard.isEnabled || sleepGuard.isApplying else {
+            finishStop()
+            return
+        }
+        sleepGuard.setEnabled(false, whenDone: { [weak self] in
+            guard let self else { return }
+            self.sleepGuard.refresh()
+            // 用户取消 / 撤销失败：闸还在 → 关闭整体未发生，什么都不做
+            guard !self.sleepGuard.isEnabled else { return }
+            self.finishStop()
+        })
+    }
+
+    /// 关闭的后半段：停引擎 + 清恢复键 + 图标落回关闭态。
+    /// 只有撤闸已成立（或本就不需要撤闸）才走到这里——停引擎后 phase 沿上的撤闸是幂等空操作。
+    private func finishStop() {
         engine.stop()
         UserDefaults.standard.set(false, forKey: "resumeKeepAliveOnLaunch")
-        releaseGuardIfNeeded()
+        refreshIcon()
     }
 
     /// 电池档完整性：保活承诺「合盖必不睡」，闸缺失时兑现不了——补拉（弹一次授权；闸已在=免弹）

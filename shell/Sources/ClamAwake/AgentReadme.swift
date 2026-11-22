@@ -13,7 +13,7 @@ enum AgentReadme {
 
     **该说（最小集）**
     - 一句预期：「装好之后合盖，机器继续跑，屏幕不亮。」
-    - 授权预告（仅电池档）：「电池上也保需要一次管理员授权，弹窗出现时请输入密码。」
+    - 授权预告（仅电池档）：「电池档开关时会各弹一次管理员授权，弹窗出现时请输入密码——允许才生效，不允许就维持原样（该开没开、该关没关）。」
 
     **该做（命令与读数，按序）**
     - 装（一条命令，用户零点击）：`curl -fsSL https://github.com/zhangweijian97/ClamAwake/releases/latest/download/install.sh | sh`
@@ -29,7 +29,7 @@ enum AgentReadme {
 
     **该说**
     - 结果怎么报：「组件已就绪，合盖效果请合上盖子确认」（支撑读数：protecting=yes）
-    - 收尾约定：你开的保活由你关——任务结束或用户说「不用了」→ `stop`，读 `protecting=no` 确认
+    - 收尾约定：你开的保活由你关——任务结束或用户说「不用了」→ `stop`。电池档 `stop` 会弹授权窗：输密码 = 关干净（读数 `protecting=no` 且 `sleep_guard=off`）；点不允许 = 关闭没有发生，保活还在跑（`protecting=yes`），想关再 `stop` 一次并请用户输密码。
 
     **该停**
     - 不问「懂了吗/明白吗」——理解无法观测，用读数代替理解感
@@ -42,7 +42,7 @@ enum AgentReadme {
 
     ## 失败退路
     - start 后 phase=failed：读 error 行，重试一次仍败跑 doctor
-    - 授权弹窗被取消：回落 plugged 档零授权可用，不硬推授权
+    - 开启时授权弹窗被取消：回落 plugged 档零授权可用，不硬推授权（`stop` 时取消不算失败，见「收尾约定」）
     - 环境 unsupported（私有类缺失）：这台机器不支持，如实报，不换机器强试
 
     ## 验收（产品对智能体的期待）
