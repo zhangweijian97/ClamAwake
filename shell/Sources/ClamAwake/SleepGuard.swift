@@ -76,7 +76,9 @@ final class SleepGuardManager: ObservableObject {
                 self.isApplying = false
                 if let message = result.1 { self.lastError = message }
                 self.refresh()
-                let done = self.pendingWhenDone
+                // 主路径（非接续）也要触发本次传入的 whenDone——原实现只读 pendingWhenDone，
+                // 直接调用时回调被丢弃（2026-11-22 实测：撤闸成功但 finishStop 不执行，半关闭态）
+                let done = self.pendingWhenDone ?? whenDone
                 self.pendingWhenDone = nil
                 if let pending = self.pendingTarget {
                     self.pendingTarget = nil
