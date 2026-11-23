@@ -38,9 +38,10 @@ enum ControlAuth {
         return true
     }
 
-    /// 第一拍：记下「已预告」标记（时间戳 + 命令）
+    /// 第一拍：记下「已预告」标记（时间戳 + 命令）。Int 而非 Double：shell 侧 defaults read
+    /// 对 float 显示科学计数法、数字校验拒收，两侧统一 int（2026-11-23 实弹实证）。
     static func announce(for request: String) {
-        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: announcedAtKey)
+        UserDefaults.standard.set(Int(Date().timeIntervalSince1970), forKey: announcedAtKey)
         UserDefaults.standard.set(request, forKey: announcedActionKey)
     }
 

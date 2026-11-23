@@ -56,7 +56,9 @@ esac
 if [ "$NEEDS_AUTH" = "1" ] && ! auth_announced_recently; then
   printf '%s\n' "needs_user_auth=yes"
   printf '%s\n' "prompt_text=即将弹出管理员授权窗：请先告知用户「输密码以完成换装（会调整系统级睡眠设置，可能弹一到两次）」，用户准备好后重新执行本命令"
-  defaults write com.clamawake.app authAnnouncedAt -float "$(date +%s)"
+  # -int 而非 -float：defaults read 对 float 返回科学计数法（1.79e+09），下方数字校验拒收，
+  # 第二拍永远读不到新鲜标记、无限退回第一拍（2026-11-23 实弹实证）。两侧（shell/CLI）统一写 int。
+  defaults write com.clamawake.app authAnnouncedAt -int "$(date +%s)"
   defaults write com.clamawake.app authAnnouncedAction start
   exit 5
 fi
