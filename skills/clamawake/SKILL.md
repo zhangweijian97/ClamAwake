@@ -82,6 +82,8 @@ hdiutil detach "/Volumes/ClamAwake"
 
 - `start` 后 `phase=failed`：读 `error` 行。常见三种——私有类缺失（本机不支持）、分辨率组合被拒（换 1920x1080 再试）、3 秒未上线（重试一次，仍失败跑 doctor）；
 - 退出码 5（授权预告）：不是成功也不是失败——把 `prompt_text` 原话转达用户后重跑；超过 5 分钟重跑=预告过期，会重新出预告；
+- 授权飞行中的 `status` 是快照：第二拍返回时弹窗还在等输密码，此刻 status 是飞行前旧值（「进行中」不是「没做」）——落定后重跑 `status`，以 `protecting`/`sleep_guard` 终态行判读；
+- 手动 `quit` 命令与 `mode` 切换的授权弹窗不进两拍（弹窗前无预告）——install.sh 换装场景才按协议预告；
 - doctor 的 `lid_sleep` 是 warn：需要人类执行 `sudo pmset -a disablesleep 1`，或让用户切到 `battery` 档由应用请求授权——**不要自己尝试 sudo**；
 - 已在跑（`keepalive_running` warn 或存在 `kya=yes` 的屏）：复用，不要重复建屏。
 
