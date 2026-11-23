@@ -155,3 +155,11 @@ launchd 那一支没落地也无需落地——同一条用户价值（重启后
 
 ## 2026-11-22 深夜 0.3.8 后续四连修（goal-088256 链+goal-1e0095）
 授权语义回退后连续修复：①关闭原子化（50397cc，先撤闸后停引擎，不允许=回滚）②setEnabled 主路径接住 whenDone（0ea6205，撤闸成功但 finishStop 不执行的一行修复）③开启原子化（f6dbecd，对称回滚+切档防御）④**两拍授权预告协议**（ac5d190，goal-1e0095：battery 档 stop/start/toggle 将弹窗时第一拍输出 needs_user_auth=yes+exit 5 不弹窗，agent 转达用户后 5 分钟内同命令重跑才真正弹窗；install.sh 同协议；mode/quit 未覆盖留观察）。三步实弹（关闭侧）全过；两拍第二拍实弹与 mode/quit 覆盖留验。**抽验判例：验两拍分流必须新 app 实例接控制端口——新 CLI 对装着的旧 app 发命令会绕过分流直触弹窗（本次抽验事故：多弹一次窗，已清）**。
+
+## 2026-11-23 两拍第二拍实弹全链通过（goal-1e0095 收口）
+第二拍实弹（用户在场输密码）三个面全过：① install.sh 换装侧两拍（预告→重跑→执行→用毕清标记）；② CLI stop 侧（预告+零变化→重跑弹窗撤闸→异步落定 finishStop）；③ CLI start 侧（预告+零变化→重跑弹窗上闸→落定复读 running/protecting=yes/sleep_guard=on）。验证过程中：
+- **真 bug 修复（ecd4044）**：两拍标记 defaults write 用 -float，defaults read 显示科学计数法（1.79e+09），shell 数字校验拒收→第二拍永远退回第一拍无限循环。冒烟只验了第一拍输出形态，重跑实弹才暴露。修复=两侧写型统一 int（install.sh + Control.swift）；单测+实弹全过。
+- **判读纪律（9c17825 说明书句）**：授权飞行中的 status 是快照——第二拍返回时弹窗还在等输密码，status 是飞行前旧值，「进行中」不是「没做」；落定后重跑 status 读 protecting/sleep_guard 终态。实弹中被抢读误导，差点误判撤闸失效。
+- **install.sh 无参数=下载 Release latest 的坑**：0.3.8 未发版时无参数跑 install.sh 会把 v0.3.7 装回来（降级）。发版前本地测试必须传本地 DMG 路径（`sh scripts/install.sh dist/ClamAwake.dmg`）。
+- **mode/quit 现状确认（代码级）**：guardPrompt 只认 start/stop/toggle——mode 切换与 quit 撤闸/补闸弹窗前无预告（不经两拍）。是否纳入两拍=改进候选，留后续判断。
+- 终态读数：0.3.8 装机（Info.plist=0.3.8+usage 两拍教学句+readme 完整输出），保活恢复 running/protecting=yes/sleep_guard=on。
